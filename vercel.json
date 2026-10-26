@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/cron/alerta-prazos",
+      "schedule": "0 11 * * *"
+    }
+  ]
+}
