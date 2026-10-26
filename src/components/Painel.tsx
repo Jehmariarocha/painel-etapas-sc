@@ -112,17 +112,14 @@ export default function Painel({ email }: { email: string }) {
   }
 
   function mutar(projId: string, fn: (p: Projeto) => void) {
-    let alvo: Projeto | null = null
-    setProjetos((atual) =>
-      atual.map((p) => {
-        if (p.id !== projId) return p
-        const c: Projeto = structuredClone(p)
-        fn(c)
-        alvo = c
-        return c
-      }),
-    )
-    if (alvo) void persistir(alvo)
+    // Calcula o projeto novo AGORA (fora do updater do setState), senão a
+    // gravação roda antes do React montar o novo valor e nada é salvo.
+    const atual = projetosRef.current.find((x) => x.id === projId)
+    if (!atual) return
+    const c: Projeto = structuredClone(atual)
+    fn(c)
+    setProjetos((lista) => lista.map((x) => (x.id === projId ? c : x)))
+    void persistir(c)
   }
 
   function acharRodando(): { projId: string; code: string } | null {
@@ -135,26 +132,22 @@ export default function Painel({ email }: { email: string }) {
   /* ---------------- ações de etapa ---------------- */
   function iniciarEtapa(projId: string, code: string, personId: string | null) {
     const running = acharRodando()
-    const afetados = new Set<string>([projId])
-    if (running) afetados.add(running.projId)
-    const salvar: Projeto[] = []
-    setProjetos((atual) =>
-      atual.map((p) => {
-        if (!afetados.has(p.id)) return p
-        const c: Projeto = structuredClone(p)
-        if (running && running.projId === c.id) {
-          const rs = c.stages.find((s) => s.code === running.code)
-          if (rs) stopRun(rs, false)
-        }
-        if (c.id === projId) {
-          const ts = c.stages.find((s) => s.code === code)
-          if (ts) startStage(ts, personId)
-        }
-        salvar.push(c)
-        return c
-      }),
-    )
-    salvar.forEach((p) => void persistir(p))
+    const ids = new Set<string>([projId])
+    if (running) ids.add(running.projId)
+    // Clona os afetados AGORA (fora do updater), aplica e grava.
+    const clones = new Map<string, Projeto>()
+    for (const id of ids) {
+      const orig = projetosRef.current.find((x) => x.id === id)
+      if (orig) clones.set(id, structuredClone(orig))
+    }
+    if (running) {
+      const rs = clones.get(running.projId)?.stages.find((s) => s.code === running.code)
+      if (rs) stopRun(rs, false)
+    }
+    const ts = clones.get(projId)?.stages.find((s) => s.code === code)
+    if (ts) startStage(ts, personId)
+    setProjetos((atual) => atual.map((p) => clones.get(p.id) || p))
+    clones.forEach((c) => void persistir(c))
   }
 
   function requestStart(projId: string, code: string) {
