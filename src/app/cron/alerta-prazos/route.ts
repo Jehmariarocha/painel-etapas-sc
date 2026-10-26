@@ -165,11 +165,11 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: true, enviado: false, motivo: 'nada vencido ou a vencer' })
   }
 
-  // Destinatário do alerta. Com o remetente de teste do Resend
-  // (onboarding@resend.dev) só dá para enviar ao e-mail dono da conta Resend,
-  // então use ALERTA_EMAIL para isso; cai em DONO_EMAIL se não for definido.
-  const destino = process.env.ALERTA_EMAIL || process.env.DONO_EMAIL
-  if (!destino) return NextResponse.json({ error: 'ALERTA_EMAIL/DONO_EMAIL não configurado' }, { status: 503 })
+  // Destinatário do alerta. O remetente de teste do Resend (onboarding@resend.dev)
+  // só entrega ao e-mail dono da conta Resend — por isso FIXO no e-mail da conta,
+  // sem depender de variável. Para enviar ao @1comodo.online ou à equipe, basta
+  // verificar o domínio 1comodo.online em resend.com/domains e trocar o `from`.
+  const destino = process.env.ALERTA_EMAIL || 'jessik.mbr@gmail.com'
 
   const assunto = `Painel de Etapas — ${vencidas.length} atrasada(s), ${aVencer.length} a vencer`
   try {
