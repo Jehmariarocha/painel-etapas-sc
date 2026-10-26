@@ -1,0 +1,23 @@
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --foreground: #1a1a1a;
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: 'Century Gothic', 'Futura', 'Avant Garde', 'URW Gothic', Verdana, sans-serif;
+}
+
+.scrollbar-thin::-webkit-scrollbar { width: 8px; height: 8px; }
+.scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+.scrollbar-thin::-webkit-scrollbar-thumb { background: #d9d5c9; border-radius: 4px; }
+
+.tnum { font-variant-numeric: tabular-nums; }
+
+@media print {
+  nav, .no-print { display: none !important; }
+  body { background: white !important; }
+}
