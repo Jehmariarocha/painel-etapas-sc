@@ -142,7 +142,21 @@ export async function GET(req: NextRequest) {
   // ?dry=1 → só calcula e devolve, sem enviar (para testar).
   const dry = req.nextUrl.searchParams.get('dry')
   if (dry) {
-    return NextResponse.json({ ok: true, dry: true, vencidas: vencidas.length, aVencer: aVencer.length, itens: { vencidas, aVencer } })
+    return NextResponse.json({
+      ok: true,
+      dry: true,
+      hoje: hojeISO_BRT(),
+      totalProjetos: projetos.length,
+      diagnostico: projetos.map((p) => ({
+        nome: p.name,
+        prazos: p.stages
+          .filter((s) => s.due)
+          .map((s) => ({ code: s.code, due: s.due, status: s.status, dias: diasAte(s.due as string) })),
+      })),
+      vencidas: vencidas.length,
+      aVencer: aVencer.length,
+      itens: { vencidas, aVencer },
+    })
   }
 
   if (total === 0) {
