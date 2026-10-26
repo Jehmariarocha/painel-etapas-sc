@@ -167,6 +167,10 @@ export async function GET(req: NextRequest) {
   if (!destino) return NextResponse.json({ error: 'DONO_EMAIL não configurado' }, { status: 503 })
 
   const assunto = `Painel de Etapas — ${vencidas.length} atrasada(s), ${aVencer.length} a vencer`
-  await enviarEmail(destino, assunto, montarHtml(vencidas, aVencer))
-  return NextResponse.json({ ok: true, enviado: true, para: destino, vencidas: vencidas.length, aVencer: aVencer.length })
+  try {
+    const resposta = await enviarEmail(destino, assunto, montarHtml(vencidas, aVencer))
+    return NextResponse.json({ ok: true, enviado: true, para: destino, vencidas: vencidas.length, aVencer: aVencer.length, resend: resposta })
+  } catch (e) {
+    return NextResponse.json({ ok: false, enviado: false, erro: e instanceof Error ? e.message : String(e) }, { status: 500 })
+  }
 }
