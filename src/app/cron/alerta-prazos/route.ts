@@ -146,6 +146,8 @@ export async function GET(req: NextRequest) {
       ok: true,
       dry: true,
       hoje: hojeISO_BRT(),
+      destino: process.env.ALERTA_EMAIL || process.env.DONO_EMAIL || null,
+      temAlertaEmail: !!process.env.ALERTA_EMAIL,
       totalProjetos: projetos.length,
       diagnostico: projetos.map((p) => ({
         nome: p.name,
