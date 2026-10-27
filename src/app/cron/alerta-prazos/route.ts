@@ -8,8 +8,9 @@ export const dynamic = 'force-dynamic'
 
 /**
  * Alerta automático de prazos — roda uma vez por dia (Vercel Cron, ver
- * `vercel.json`). Varre as etapas, acha as vencidas e as a vencer (até 3 dias),
- * e manda um e-mail de resumo para o escritório. Se não houver nada, não envia.
+ * `vercel.json`). Varre as etapas dentro da janela de alerta — de 2 dias antes
+ * do prazo até 2 dias depois de vencido — e manda um e-mail de resumo para o
+ * escritório. Se não houver nada nessa janela, não envia.
  *
  * Fica FORA de `/api` de propósito: o `proxy.ts` só tranca `/api/*`, então esta
  * rota não passa pelo login — ela se protege sozinha pelo segredo do cron
@@ -18,7 +19,8 @@ export const dynamic = 'force-dynamic'
  */
 
 const APP_URL = 'https://painel-etapas-sc-7mrk.vercel.app'
-const DIAS_A_VENCER = 3
+const DIAS_A_VENCER = 2 // alerta quando faltam até 2 dias para o prazo
+const DIAS_APOS_VENCER = 2 // continua alertando até 2 dias depois de vencer
 const DE = 'Painel de Etapas 1Comodo <onboarding@resend.dev>'
 
 /** Data de hoje (YYYY-MM-DD) no horário de Brasília (UTC-3). */
@@ -67,8 +69,8 @@ function coletar(projetos: Projeto[], equipe: Pessoa[]): { vencidas: Item[]; aVe
         due: st.due,
         dias: d,
       }
-      if (d < 0) vencidas.push(item)
-      else if (d <= DIAS_A_VENCER) aVencer.push(item)
+      if (d < 0 && d >= -DIAS_APOS_VENCER) vencidas.push(item)
+      else if (d >= 0 && d <= DIAS_A_VENCER) aVencer.push(item)
     }
   }
   vencidas.sort((a, b) => a.dias - b.dias)
