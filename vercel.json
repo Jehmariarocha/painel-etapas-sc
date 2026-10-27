@@ -2,7 +2,7 @@
   "crons": [
     {
       "path": "/cron/alerta-prazos",
-      "schedule": "0 11 * * *"
+      "schedule": "0 12 * * *"
     }
   ]
 }
