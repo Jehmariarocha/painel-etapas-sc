@@ -456,10 +456,10 @@ function Header({
         </div>
         <span className="flex-1" />
         <span className="hidden text-xs sm:inline" style={{ color: C.faint }}>{email}</span>
+        <button className="btn-primary" onClick={onNovo}>+ Novo projeto</button>
         <button className="btn" onClick={onEquipe}>Equipe</button>
         <button className="btn" onClick={onRelatorio}>Relatório</button>
         <button className="btn-ghost" onClick={onLogout}>Sair</button>
-        <button className="btn-primary" onClick={onNovo}>+ Novo projeto</button>
       </div>
       <style jsx>{`
         .btn {
