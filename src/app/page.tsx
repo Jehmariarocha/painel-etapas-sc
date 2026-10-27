@@ -13,5 +13,5 @@ export default async function Home() {
   const store = await cookies()
   const sessao = await lerCookieSessao(store.get(COOKIE_SESSAO)?.value, process.env.ADMIN_SECRET || '')
   if (!sessao) redirect('/login')
-  return <Painel email={sessao.email} />
+  return <Painel email={sessao.email} papel={sessao.papel} />
 }

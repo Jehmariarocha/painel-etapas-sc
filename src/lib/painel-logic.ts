@@ -4,6 +4,7 @@ import {
   type Projeto,
   type Etapa,
   type EventoLog,
+  type PedidoPrazo,
 } from './tipos'
 
 /**
@@ -106,11 +107,87 @@ export function logEvent(st: Etapa, t: EventoLog['t'], by: string | null, at?: n
   if (st.log.length > 200) st.log = st.log.slice(-200)
 }
 
-/** Registra no histórico uma mudança de prazo: quem (e-mail), de→para. */
+/** Registra no histórico uma mudança de prazo direta (dona): quem, de→para. */
 export function logDueChange(st: Etapa, by: string | null, from: string | null, to: string | null): void {
   if (!Array.isArray(st.log)) st.log = []
   st.log.push({ t: 'due', by: by || null, at: Date.now(), from: from ?? null, to: to ?? null })
   if (st.log.length > 200) st.log = st.log.slice(-200)
+}
+
+function pushLog(st: Etapa, ev: EventoLog): void {
+  if (!Array.isArray(st.log)) st.log = []
+  st.log.push(ev)
+  if (st.log.length > 200) st.log = st.log.slice(-200)
+}
+
+/** Equipe pediu uma mudança de prazo (com justificativa). */
+export function logDueReq(st: Etapa, by: string, from: string | null, to: string | null, reason: string): void {
+  pushLog(st, { t: 'due_req', by, at: Date.now(), from: from ?? null, to: to ?? null, reason })
+}
+
+/** Dona aprovou um pedido: a data muda e fica o registro de quem pediu. */
+export function logDueOk(st: Etapa, by: string, from: string | null, to: string | null, req: string): void {
+  pushLog(st, { t: 'due_ok', by, at: Date.now(), from: from ?? null, to: to ?? null, req })
+}
+
+/** Dona recusou um pedido: a data NÃO muda; fica o registro. */
+export function logDueRej(st: Etapa, by: string, to: string | null, req: string): void {
+  pushLog(st, { t: 'due_rej', by, at: Date.now(), to: to ?? null, req })
+}
+
+/**
+ * Trava do prazo com aprovação — a regra AUTORITATIVA, roda no servidor sobre
+ * o que o cliente mandou salvar (`incoming`), comparando com o que está gravado
+ * (`existente`). Altera `incoming` no lugar.
+ *
+ *  - `dona`: manda em tudo (muda a data direto, aprova/recusa pedidos). Nada a travar.
+ *  - `equipe`: a data fica CADEADA — só pode deixar/cancelar um pedido pendente,
+ *    nunca mudar `due` nem aprovar o próprio pedido. Quem pediu é sempre quem logou.
+ *
+ * O histórico é gravado no cliente; aqui protegemos o estado que vale (a data).
+ */
+function mesmoPedido(a: PedidoPrazo | null, b: PedidoPrazo | null): boolean {
+  if (!a || !b) return a === b
+  return a.to === b.to && a.by === b.by && a.at === b.at && a.reason === b.reason
+}
+
+export function travarPrazo(
+  existente: Projeto,
+  incoming: Projeto,
+  papel: 'dona' | 'equipe',
+  email: string,
+): void {
+  if (papel === 'dona') return
+  for (const n of incoming.stages) {
+    const e = existente.stages.find((x) => x.code === n.code)
+    if (!e) continue
+    // 1) a data nunca muda pela mão da equipe.
+    n.due = e.due
+
+    const ePed = e.pendingDue ?? null
+    const nPed = n.pendingDue ?? null
+
+    // 2) pedido inalterado → mantém exatamente o que está gravado (não reescreve
+    //    autoria quando a pessoa está só mexendo em OUTRO campo da etapa).
+    if (mesmoPedido(ePed, nPed)) { n.pendingDue = ePed; continue }
+
+    // 3) ninguém mexe no pedido de OUTRA pessoa (nem cancela, nem substitui).
+    if (ePed && ePed.by !== email) { n.pendingDue = ePed; continue }
+
+    // 4) cancelar o próprio pedido.
+    if (!nPed) { n.pendingDue = null; continue }
+
+    // 5) pedir a data que já é a atual não faz sentido.
+    if (nPed.to === e.due) { n.pendingDue = ePed; continue }
+
+    // 6) novo pedido: quem pediu é sempre o e-mail logado.
+    n.pendingDue = {
+      to: nPed.to ?? null,
+      by: email,
+      at: nPed.at || Date.now(),
+      reason: String(nPed.reason || '').slice(0, 500),
+    }
+  }
 }
 
 /** Encerra a contagem em curso; `auto` = foi a pausa automática (teto de horas). */

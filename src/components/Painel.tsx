@@ -1,11 +1,11 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { CODES, ETAPAS_MODELO, MAX_RUN_HOURS, type Projeto, type Pessoa, type Etapa, type EventoLog } from '@/lib/tipos'
+import { CODES, ETAPAS_MODELO, MAX_RUN_HOURS, type Projeto, type Pessoa, type Etapa, type EventoLog, type PedidoPrazo } from '@/lib/tipos'
 import {
   liveSeconds, fmtClock, fmtHours, fmtHoursNum, fmtTime, fmtDateTime, fmtDate, daysUntil,
   projectTotals, currentStage, startStage, stopRun, toggleDone, moveToStage, autoPauseStage,
-  logDueChange,
+  logDueChange, logDueReq, logDueOk, logDueRej,
 } from '@/lib/painel-logic'
 
 /* ---------------- cores da marca ---------------- */
@@ -34,10 +34,12 @@ type Modal =
   | { kind: 'resp'; projId: string }
   | { kind: 'start'; projId: string; code: string }
   | { kind: 'log'; projId: string; code: string }
+  | { kind: 'prazoReq'; projId: string; code: string; to: string | null }
   | { kind: 'import' }
   | null
 
-export default function Painel({ email }: { email: string }) {
+export default function Painel({ email, papel }: { email: string; papel: 'dona' | 'equipe' }) {
+  const ehDona = papel === 'dona'
   const [projetos, setProjetos] = useState<Projeto[]>([])
   const [equipe, setEquipe] = useState<Pessoa[]>([])
   const [loading, setLoading] = useState(true)
@@ -186,16 +188,55 @@ export default function Painel({ email }: { email: string }) {
       if (s) s.personId = pid || null
     })
   }
-  function setPrazo(projId: string, code: string, iso: string) {
+  // Prazo com aprovação: a dona muda direto (fica no histórico); a equipe não
+  // muda — abre um pedido com justificativa pra dona aprovar/recusar.
+  function aoMudarPrazo(projId: string, code: string, iso: string) {
+    const proj = projetosRef.current.find((x) => x.id === projId)
+    const s = proj?.stages.find((x) => x.code === code)
+    if (!s) return
+    const novo = iso || null
+    const antigo = s.due || null
+    if (novo === antigo) return
+    if (ehDona) {
+      mutar(projId, (p) => {
+        const st = p.stages.find((x) => x.code === code)
+        if (!st) return
+        st.due = novo
+        logDueChange(st, email, antigo, novo)
+      })
+    } else {
+      setModal({ kind: 'prazoReq', projId, code, to: novo })
+    }
+  }
+
+  function enviarPedidoPrazo(projId: string, code: string, to: string | null, reason: string) {
     mutar(projId, (p) => {
       const s = p.stages.find((x) => x.code === code)
       if (!s) return
-      const novo = iso || null
+      s.pendingDue = { to, by: email, at: Date.now(), reason }
+      logDueReq(s, email, s.due || null, to, reason)
+    })
+    setModal(null)
+  }
+
+  function aprovarPrazo(projId: string, code: string) {
+    mutar(projId, (p) => {
+      const s = p.stages.find((x) => x.code === code)
+      if (!s || !s.pendingDue) return
+      const ped = s.pendingDue
       const antigo = s.due || null
-      if (novo === antigo) return
-      s.due = novo
-      // Trava "pode mudar, mas registra": grava quem (e-mail logado) mudou o prazo.
-      logDueChange(s, email, antigo, novo)
+      s.due = ped.to
+      logDueOk(s, email, antigo, ped.to, ped.by)
+      s.pendingDue = null
+    })
+  }
+
+  function recusarPrazo(projId: string, code: string) {
+    mutar(projId, (p) => {
+      const s = p.stages.find((x) => x.code === code)
+      if (!s || !s.pendingDue) return
+      logDueRej(s, email, s.pendingDue.to, s.pendingDue.by)
+      s.pendingDue = null
     })
   }
   function setResponsaveisProjeto(projId: string, ids: string[]) {
@@ -294,7 +335,10 @@ export default function Painel({ email }: { email: string }) {
             onDone={(code) => concluirEtapa(projeto.id, code)}
             onPrevisto={(code, h) => setPrevisto(projeto.id, code, h)}
             onResponsavel={(code, pid) => setResponsavel(projeto.id, code, pid)}
-            onPrazo={(code, iso) => setPrazo(projeto.id, code, iso)}
+            onPrazo={(code, iso) => aoMudarPrazo(projeto.id, code, iso)}
+            ehDona={ehDona}
+            onAprovarPrazo={(code) => aprovarPrazo(projeto.id, code)}
+            onRecusarPrazo={(code) => recusarPrazo(projeto.id, code)}
             onEditResp={() => setModal({ kind: 'resp', projId: projeto.id })}
             onLog={(code) => setModal({ kind: 'log', projId: projeto.id, code })}
             onExcluir={() => excluirProjeto(projeto.id)}
@@ -366,6 +410,19 @@ export default function Painel({ email }: { email: string }) {
         const st = p?.stages.find((s) => s.code === modal.code)
         if (!p || !st) return null
         return <LogModal etapa={st} personById={personById} onFechar={() => setModal(null)} />
+      })()}
+      {modal?.kind === 'prazoReq' && (() => {
+        const p = projetos.find((x) => x.id === modal.projId)
+        const st = p?.stages.find((s) => s.code === modal.code)
+        if (!p || !st) return null
+        return (
+          <PedirPrazoModal
+            etapa={st}
+            to={modal.to}
+            onFechar={() => setModal(null)}
+            onEnviar={(reason) => enviarPedidoPrazo(modal.projId, modal.code, modal.to, reason)}
+          />
+        )
       })()}
       {modal?.kind === 'import' && (
         <ImportModal onFechar={() => setModal(null)} onImportar={importar} />
@@ -687,7 +744,7 @@ function Card({
 
 /* ================= Detalhe do projeto ================= */
 function Detalhe({
-  projeto: p, equipe, personById, onVoltar, onPlay, onPause, onDone, onPrevisto, onResponsavel, onPrazo, onEditResp, onLog, onExcluir,
+  projeto: p, equipe, personById, onVoltar, onPlay, onPause, onDone, onPrevisto, onResponsavel, onPrazo, ehDona, onAprovarPrazo, onRecusarPrazo, onEditResp, onLog, onExcluir,
 }: {
   projeto: Projeto
   equipe: Pessoa[]
@@ -699,6 +756,9 @@ function Detalhe({
   onPrevisto: (code: string, h: number) => void
   onResponsavel: (code: string, pid: string) => void
   onPrazo: (code: string, iso: string) => void
+  ehDona: boolean
+  onAprovarPrazo: (code: string) => void
+  onRecusarPrazo: (code: string) => void
   onEditResp: () => void
   onLog: (code: string) => void
   onExcluir: () => void
@@ -754,6 +814,9 @@ function Detalhe({
             onPrevisto={(h) => onPrevisto(st.code, h)}
             onResponsavel={(pid) => onResponsavel(st.code, pid)}
             onPrazo={(iso) => onPrazo(st.code, iso)}
+            ehDona={ehDona}
+            onAprovarPrazo={() => onAprovarPrazo(st.code)}
+            onRecusarPrazo={() => onRecusarPrazo(st.code)}
             onLog={() => onLog(st.code)}
           />
         ))}
@@ -773,7 +836,7 @@ function Stat({ cap, big, sub, bigColor }: { cap: string; big: string; sub: stri
 }
 
 function LinhaEtapa({
-  st, equipe, personById, onPlay, onPause, onDone, onPrevisto, onResponsavel, onPrazo, onLog,
+  st, equipe, personById, onPlay, onPause, onDone, onPrevisto, onResponsavel, onPrazo, ehDona, onAprovarPrazo, onRecusarPrazo, onLog,
 }: {
   st: Etapa
   equipe: Pessoa[]
@@ -784,6 +847,9 @@ function LinhaEtapa({
   onPrevisto: (h: number) => void
   onResponsavel: (pid: string) => void
   onPrazo: (iso: string) => void
+  ehDona: boolean
+  onAprovarPrazo: () => void
+  onRecusarPrazo: () => void
   onLog: () => void
 }) {
   const sec = liveSeconds(st)
@@ -850,9 +916,11 @@ function LinhaEtapa({
             <input
               type="date" value={st.due || ''}
               onChange={(e) => onPrazo(e.target.value)}
+              title={ehDona ? 'Alterar prazo' : 'Pedir mudança de prazo (precisa de aprovação)'}
               className="rounded-md border px-1.5 py-0.5 tnum"
               style={{ borderColor: C.linha, background: C.surf2 }}
             />
+            {!ehDona && <span title="Mudança de prazo precisa de aprovação" style={{ color: C.faint }}>🔒</span>}
           </label>
           {over && (
             <span className="rounded-[5px] px-1.5 py-px text-[11px] font-bold uppercase" style={{ color: C.danger, background: C.dangerSoft }}>vencida</span>
@@ -861,6 +929,9 @@ function LinhaEtapa({
             <span className="rounded-[5px] px-1.5 py-px text-[11px] font-bold uppercase" style={{ color: C.ink, background: C.soft }}>
               {du === 0 ? 'vence hoje' : `vence em ${du}d`}
             </span>
+          )}
+          {st.pendingDue && (
+            <PedidoPendente pedido={st.pendingDue} due={st.due} ehDona={ehDona} onAprovar={onAprovarPrazo} onRecusar={onRecusarPrazo} />
           )}
         </div>
       </div>
@@ -901,6 +972,56 @@ function IconBtn({ children, onClick, title, style }: { children: React.ReactNod
     >
       {children}
     </button>
+  )
+}
+
+/** Mostra um pedido de mudança de prazo pendente; a dona aprova/recusa aqui. */
+function PedidoPendente({ pedido, due, ehDona, onAprovar, onRecusar }: { pedido: PedidoPrazo; due: string | null; ehDona: boolean; onAprovar: () => void; onRecusar: () => void }) {
+  const alvo = pedido.to ? fmtDate(pedido.to) : 'sem prazo'
+  const atual = due ? fmtDate(due) : 'sem prazo'
+  return (
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md px-2 py-1 text-[12px]" style={{ background: C.soft, border: `1px solid ${C.amarelo}`, color: C.ink }}>
+      <span>⏳ Pedido: {atual} → <b>{alvo}</b></span>
+      <span style={{ color: C.muted }}>· {pedido.by}</span>
+      {pedido.reason && <span style={{ color: C.muted }}>· “{pedido.reason}”</span>}
+      {ehDona ? (
+        <span className="flex gap-1">
+          <button onClick={onAprovar} className="rounded px-2 py-0.5 font-semibold" style={{ background: C.done, color: '#fff' }}>✓ Aprovar</button>
+          <button onClick={onRecusar} className="rounded px-2 py-0.5 font-semibold" style={{ background: C.dangerSoft, color: C.danger }}>✗ Recusar</button>
+        </span>
+      ) : (
+        <span style={{ color: C.muted }}>· aguardando aprovação</span>
+      )}
+    </div>
+  )
+}
+
+/** Modal onde a equipe escreve a justificativa do pedido de mudança de prazo. */
+function PedirPrazoModal({ etapa, to, onFechar, onEnviar }: { etapa: Etapa; to: string | null; onFechar: () => void; onEnviar: (reason: string) => void }) {
+  const [reason, setReason] = useState('')
+  const alvo = to ? fmtDate(to) : 'remover o prazo'
+  const atual = etapa.due ? fmtDate(etapa.due) : 'sem prazo'
+  return (
+    <Scrim onFechar={onFechar}>
+      <h3 className="text-lg font-bold">Pedir mudança de prazo</h3>
+      <p className="mb-3 text-[13px]" style={{ color: C.muted }}>
+        {etapa.code} {etapa.name}: <b>{atual}</b> → <b>{alvo}</b>. O pedido vai para aprovação da responsável.
+      </p>
+      <label className="text-[13px] font-semibold">Justificativa</label>
+      <textarea
+        value={reason}
+        onChange={(e) => setReason(e.target.value)}
+        rows={3}
+        placeholder="Por que o prazo precisa mudar?"
+        className="mt-1 w-full rounded-md border px-2 py-1.5 text-[13px]"
+        style={{ borderColor: C.linha, background: C.surf2 }}
+      />
+      <div className="mt-4 flex justify-end gap-2.5">
+        <button className="btn2" onClick={onFechar}>Cancelar</button>
+        <button className="btn2-primary" disabled={!reason.trim()} style={{ opacity: reason.trim() ? 1 : 0.5 }} onClick={() => onEnviar(reason.trim())}>Enviar pedido</button>
+      </div>
+      <EstiloModal />
+    </Scrim>
   )
 }
 
@@ -1172,14 +1293,19 @@ function QuemIniciaModal({ etapa, equipe, padrao, onFechar, onIniciar }: { etapa
 
 function LogModal({ etapa, personById, onFechar }: { etapa: Etapa; personById: (id: string) => Pessoa | null; onFechar: () => void }) {
   const LABEL: Record<string, string> = { start: 'iniciou', pause: 'pausou', auto: `pausa automática (teto de ${MAX_RUN_HOURS}h)`, done: 'concluiu', reopen: 'reabriu' }
-  const IC: Record<string, string> = { start: '▶', pause: '⏸', auto: '⏱', done: '✓', reopen: '↩', due: '📅' }
+  const IC: Record<string, string> = { start: '▶', pause: '⏸', auto: '⏱', done: '✓', reopen: '↩', due: '📅', due_req: '📨', due_ok: '✅', due_rej: '🚫' }
+  const PRAZO = new Set(['due', 'due_req', 'due_ok', 'due_rej'])
   const descPrazo = (e: EventoLog): string => {
-    const de = e.from ? fmtDate(e.from) : null
-    const para = e.to ? fmtDate(e.to) : null
-    if (!de && para) return `definiu o prazo: ${para}`
-    if (de && !para) return `removeu o prazo (era ${de})`
-    if (de && para) return `mudou o prazo: ${de} → ${para}`
-    return 'mexeu no prazo'
+    const de = e.from ? fmtDate(e.from) : 'sem prazo'
+    const para = e.to ? fmtDate(e.to) : 'sem prazo'
+    const just = e.reason ? ` — “${e.reason}”` : ''
+    if (e.t === 'due_req') return `pediu mudança de prazo: ${de} → ${para}${just}`
+    if (e.t === 'due_ok') return `aprovou a mudança: ${de} → ${para}${e.req ? ` (pedido de ${e.req})` : ''}`
+    if (e.t === 'due_rej') return `recusou o pedido${e.to ? ` (${fmtDate(e.to)})` : ''}${e.req ? ` de ${e.req}` : ''}`
+    // t === 'due' (dona mudou direto)
+    if (!e.from && e.to) return `definiu o prazo: ${para}`
+    if (e.from && !e.to) return `removeu o prazo (era ${de})`
+    return `mudou o prazo: ${de} → ${para}`
   }
   const log = (etapa.log || []).slice().reverse()
   return (
@@ -1191,7 +1317,7 @@ function LogModal({ etapa, personById, onFechar }: { etapa: Etapa; personById: (
           <p className="text-[13px]" style={{ color: C.muted }}>Sem registros ainda. Use o cronômetro para gerar o histórico.</p>
         ) : (
           log.map((e, i) => {
-            const ehPrazo = e.t === 'due'
+            const ehPrazo = PRAZO.has(e.t)
             const who = ehPrazo ? (e.by || '—') : e.by ? personById(e.by)?.name || '—' : e.t === 'auto' ? 'sistema' : '—'
             const desc = ehPrazo ? descPrazo(e) : (LABEL[e.t] || e.t)
             return (

@@ -5,17 +5,37 @@
 
 export type StatusEtapa = 'pendente' | 'andamento' | 'concluida'
 
-/** Um evento do histórico da etapa (quem iniciou/pausou/concluiu/mudou prazo e quando). */
+/**
+ * Um evento do histórico da etapa. Cronômetro: start/pause/auto/done/reopen.
+ * Prazo: `due` (dona mudou direto), `due_req` (equipe pediu), `due_ok`
+ * (dona aprovou), `due_rej` (dona recusou).
+ */
 export interface EventoLog {
-  t: 'start' | 'pause' | 'auto' | 'done' | 'reopen' | 'due'
-  /** id da pessoa (eventos de cronômetro) ou e-mail de quem logou (mudança de prazo); null quando não se sabe. */
+  t: 'start' | 'pause' | 'auto' | 'done' | 'reopen' | 'due' | 'due_req' | 'due_ok' | 'due_rej'
+  /** id da pessoa (cronômetro) ou e-mail de quem logou (eventos de prazo); null quando não se sabe. */
   by: string | null
   /** epoch ms. */
   at: number
-  /** mudança de prazo (`t: 'due'`): data anterior (YYYY-MM-DD ou null). */
+  /** eventos de prazo: data anterior (YYYY-MM-DD ou null). */
   from?: string | null
-  /** mudança de prazo (`t: 'due'`): data nova (YYYY-MM-DD ou null). */
+  /** eventos de prazo: data nova/pedida (YYYY-MM-DD ou null). */
   to?: string | null
+  /** aprovação/recusa: e-mail de quem tinha pedido. */
+  req?: string | null
+  /** pedido de mudança: a justificativa. */
+  reason?: string
+}
+
+/** Pedido de mudança de prazo (feito pela equipe) aguardando aprovação da dona. */
+export interface PedidoPrazo {
+  /** nova data pedida (YYYY-MM-DD) ou null para remover o prazo. */
+  to: string | null
+  /** e-mail de quem pediu. */
+  by: string
+  /** epoch ms. */
+  at: number
+  /** justificativa do pedido. */
+  reason: string
 }
 
 export interface Etapa {
@@ -35,6 +55,8 @@ export interface Etapa {
   /** quem iniciou a contagem em curso. */
   startedBy: string | null
   log: EventoLog[]
+  /** pedido de mudança de prazo pendente de aprovação (null = nenhum). */
+  pendingDue?: PedidoPrazo | null
 }
 
 export interface Projeto {
@@ -83,5 +105,6 @@ export function etapasNovas(): Etapa[] {
     startedAt: null,
     startedBy: null,
     log: [],
+    pendingDue: null,
   }))
 }

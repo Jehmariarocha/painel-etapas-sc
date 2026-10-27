@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { exigirAdmin } from '@/lib/sessao'
+import { exigirAdmin, lerCookieSessao, COOKIE_SESSAO } from '@/lib/sessao'
 import { lerProjeto, salvarProjeto, excluirProjeto } from '@/lib/painel'
+import { travarPrazo } from '@/lib/painel-logic'
 import type { Projeto } from '@/lib/tipos'
 
 export const dynamic = 'force-dynamic'
@@ -15,8 +16,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 }
 
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const recusa = await exigirAdmin(req)
-  if (recusa) return recusa
+  // Precisa do perfil (dona/equipe) para aplicar a trava de prazo, então lê a
+  // sessão em vez de só exigir admin.
+  const sessao = await lerCookieSessao(req.cookies.get(COOKIE_SESSAO)?.value, process.env.ADMIN_SECRET || '')
+  if (!sessao) return NextResponse.json({ error: 'Sem permissão' }, { status: 401 })
   const { id } = await params
   const existente = await lerProjeto(id)
   if (!existente) return NextResponse.json({ error: 'Não encontrado' }, { status: 404 })
@@ -27,6 +30,8 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   }
   // createdAt é do que já está gravado; nunca vem do cliente.
   body.createdAt = existente.createdAt
+  // Trava do prazo: equipe não muda data direto, só pede; dona manda. Autoritativo.
+  travarPrazo(existente, body, sessao.papel, sessao.email)
   await salvarProjeto(body)
   return NextResponse.json({ projeto: body })
 }
