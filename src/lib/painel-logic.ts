@@ -106,6 +106,13 @@ export function logEvent(st: Etapa, t: EventoLog['t'], by: string | null, at?: n
   if (st.log.length > 200) st.log = st.log.slice(-200)
 }
 
+/** Registra no histórico uma mudança de prazo: quem (e-mail), de→para. */
+export function logDueChange(st: Etapa, by: string | null, from: string | null, to: string | null): void {
+  if (!Array.isArray(st.log)) st.log = []
+  st.log.push({ t: 'due', by: by || null, at: Date.now(), from: from ?? null, to: to ?? null })
+  if (st.log.length > 200) st.log = st.log.slice(-200)
+}
+
 /** Encerra a contagem em curso; `auto` = foi a pausa automática (teto de horas). */
 export function stopRun(st: Etapa, auto: boolean): void {
   if (!st.startedAt) return

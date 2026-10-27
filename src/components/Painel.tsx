@@ -1,10 +1,11 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { CODES, ETAPAS_MODELO, MAX_RUN_HOURS, type Projeto, type Pessoa, type Etapa } from '@/lib/tipos'
+import { CODES, ETAPAS_MODELO, MAX_RUN_HOURS, type Projeto, type Pessoa, type Etapa, type EventoLog } from '@/lib/tipos'
 import {
   liveSeconds, fmtClock, fmtHours, fmtHoursNum, fmtTime, fmtDateTime, fmtDate, daysUntil,
   projectTotals, currentStage, startStage, stopRun, toggleDone, moveToStage, autoPauseStage,
+  logDueChange,
 } from '@/lib/painel-logic'
 
 /* ---------------- cores da marca ---------------- */
@@ -188,7 +189,13 @@ export default function Painel({ email }: { email: string }) {
   function setPrazo(projId: string, code: string, iso: string) {
     mutar(projId, (p) => {
       const s = p.stages.find((x) => x.code === code)
-      if (s) s.due = iso || null
+      if (!s) return
+      const novo = iso || null
+      const antigo = s.due || null
+      if (novo === antigo) return
+      s.due = novo
+      // Trava "pode mudar, mas registra": grava quem (e-mail logado) mudou o prazo.
+      logDueChange(s, email, antigo, novo)
     })
   }
   function setResponsaveisProjeto(projId: string, ids: string[]) {
@@ -1165,22 +1172,32 @@ function QuemIniciaModal({ etapa, equipe, padrao, onFechar, onIniciar }: { etapa
 
 function LogModal({ etapa, personById, onFechar }: { etapa: Etapa; personById: (id: string) => Pessoa | null; onFechar: () => void }) {
   const LABEL: Record<string, string> = { start: 'iniciou', pause: 'pausou', auto: `pausa automática (teto de ${MAX_RUN_HOURS}h)`, done: 'concluiu', reopen: 'reabriu' }
-  const IC: Record<string, string> = { start: '▶', pause: '⏸', auto: '⏱', done: '✓', reopen: '↩' }
+  const IC: Record<string, string> = { start: '▶', pause: '⏸', auto: '⏱', done: '✓', reopen: '↩', due: '📅' }
+  const descPrazo = (e: EventoLog): string => {
+    const de = e.from ? fmtDate(e.from) : null
+    const para = e.to ? fmtDate(e.to) : null
+    if (!de && para) return `definiu o prazo: ${para}`
+    if (de && !para) return `removeu o prazo (era ${de})`
+    if (de && para) return `mudou o prazo: ${de} → ${para}`
+    return 'mexeu no prazo'
+  }
   const log = (etapa.log || []).slice().reverse()
   return (
     <Scrim onFechar={onFechar}>
       <h3 className="text-lg font-bold">Histórico · {etapa.code} {etapa.name}</h3>
-      <p className="mb-4 text-[13px]" style={{ color: C.muted }}>Quem iniciou/pausou e quando. Tempo total: {fmtClock(liveSeconds(etapa))}.</p>
+      <p className="mb-4 text-[13px]" style={{ color: C.muted }}>Quem iniciou/pausou, mudanças de prazo e quando. Tempo total: {fmtClock(liveSeconds(etapa))}.</p>
       <div className="flex max-h-80 flex-col overflow-y-auto scrollbar-thin">
         {log.length === 0 ? (
           <p className="text-[13px]" style={{ color: C.muted }}>Sem registros ainda. Use o cronômetro para gerar o histórico.</p>
         ) : (
           log.map((e, i) => {
-            const who = e.by ? personById(e.by)?.name || '—' : e.t === 'auto' ? 'sistema' : '—'
+            const ehPrazo = e.t === 'due'
+            const who = ehPrazo ? (e.by || '—') : e.by ? personById(e.by)?.name || '—' : e.t === 'auto' ? 'sistema' : '—'
+            const desc = ehPrazo ? descPrazo(e) : (LABEL[e.t] || e.t)
             return (
               <div key={i} className="flex items-center gap-2.5 border-b py-2 text-[13.5px] last:border-0" style={{ borderColor: C.linha }}>
                 <span className="w-5 text-center" style={{ color: C.muted }}>{IC[e.t] || '·'}</span>
-                <span className="flex-1 min-w-0"><b>{who}</b> {LABEL[e.t] || e.t}</span>
+                <span className="flex-1 min-w-0"><b>{who}</b> {desc}</span>
                 <span className="tnum whitespace-nowrap text-[12px]" style={{ color: C.faint }}>{fmtDateTime(e.at)}</span>
               </div>
             )

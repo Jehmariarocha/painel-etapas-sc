@@ -5,13 +5,17 @@
 
 export type StatusEtapa = 'pendente' | 'andamento' | 'concluida'
 
-/** Um evento do histórico da etapa (quem iniciou/pausou/concluiu e quando). */
+/** Um evento do histórico da etapa (quem iniciou/pausou/concluiu/mudou prazo e quando). */
 export interface EventoLog {
-  t: 'start' | 'pause' | 'auto' | 'done' | 'reopen'
-  /** id da pessoa; null quando não se sabe (ex.: reabrir, pausa automática). */
+  t: 'start' | 'pause' | 'auto' | 'done' | 'reopen' | 'due'
+  /** id da pessoa (eventos de cronômetro) ou e-mail de quem logou (mudança de prazo); null quando não se sabe. */
   by: string | null
   /** epoch ms. */
   at: number
+  /** mudança de prazo (`t: 'due'`): data anterior (YYYY-MM-DD ou null). */
+  from?: string | null
+  /** mudança de prazo (`t: 'due'`): data nova (YYYY-MM-DD ou null). */
+  to?: string | null
 }
 
 export interface Etapa {
