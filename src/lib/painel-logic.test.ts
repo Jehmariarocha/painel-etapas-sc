@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { travarPrazo } from './painel-logic'
+import { travarPrazo, logDueChange, logDueReq, logDueOk, logDueRej } from './painel-logic'
 import type { Projeto, Etapa } from './tipos'
 
 /**
@@ -24,9 +24,17 @@ const MARIA = 'maria@1comodo.online'
 const DONA = 'jessica.rocha@1comodo.online'
 
 describe('travarPrazo — equipe', () => {
-  it('não muda a data direto (fica cadeada)', () => {
+  it('define a 1ª data direto quando a etapa não tem prazo', () => {
+    const existente = proj([stage({ due: null })])
+    const incoming = proj([stage({ due: '2026-11-30' })]) // 1ª data
+    travarPrazo(existente, incoming, 'equipe', JOAO)
+    expect(incoming.stages[0].due).toBe('2026-11-30')
+    expect(incoming.stages[0].pendingDue).toBeNull()
+  })
+
+  it('não muda a data direto quando JÁ existe prazo (fica cadeada)', () => {
     const existente = proj([stage({ due: '2026-10-25' })])
-    const incoming = proj([stage({ due: '2026-11-30' })]) // tentou mudar
+    const incoming = proj([stage({ due: '2026-11-30' })]) // tentou trocar
     travarPrazo(existente, incoming, 'equipe', JOAO)
     expect(incoming.stages[0].due).toBe('2026-10-25')
   })
@@ -83,6 +91,59 @@ describe('travarPrazo — equipe', () => {
     const incoming = proj([stage({ due: '2026-10-25', estimated: 40 })])
     travarPrazo(existente, incoming, 'equipe', JOAO)
     expect(incoming.stages[0].estimated).toBe(40)
+  })
+})
+
+describe('fluxo completo prazo (cliente + servidor juntos)', () => {
+  // imita o servidor: aplica a trava sobre o que o cliente mandou salvar.
+  function salvar(existente: Projeto, incoming: Projeto, papel: 'dona' | 'equipe', email: string): Projeto {
+    const copia = structuredClone(incoming)
+    travarPrazo(existente, copia, papel, email)
+    return copia
+  }
+  const ultimo = (p: Projeto) => p.stages[0].log[p.stages[0].log.length - 1]
+
+  it('equipe define 1ª data, tenta trocar (vira pedido) e a dona aprova', () => {
+    const inicial = proj([stage({ due: null })])
+
+    // 1) equipe define a 1ª data (cliente muda direto + loga 'due')
+    const c1 = structuredClone(inicial)
+    c1.stages[0].due = '2026-11-10'
+    logDueChange(c1.stages[0], JOAO, null, '2026-11-10')
+    const s1 = salvar(inicial, c1, 'equipe', JOAO)
+    expect(s1.stages[0].due).toBe('2026-11-10')
+    expect(ultimo(s1)).toMatchObject({ t: 'due', by: JOAO, to: '2026-11-10' })
+
+    // 2) equipe tenta trocar → data não muda, vira pedido com justificativa
+    const c2 = structuredClone(s1)
+    c2.stages[0].pendingDue = { to: '2026-12-01', by: JOAO, at: 100, reason: 'obra parou' }
+    logDueReq(c2.stages[0], JOAO, '2026-11-10', '2026-12-01', 'obra parou')
+    const s2 = salvar(s1, c2, 'equipe', JOAO)
+    expect(s2.stages[0].due).toBe('2026-11-10')
+    expect(s2.stages[0].pendingDue).toMatchObject({ to: '2026-12-01', by: JOAO, reason: 'obra parou' })
+    expect(ultimo(s2)).toMatchObject({ t: 'due_req', reason: 'obra parou' })
+
+    // 3) dona aprova → aplica a data pedida, limpa o pedido, registra
+    const c3 = structuredClone(s2)
+    const ped = c3.stages[0].pendingDue!
+    c3.stages[0].due = ped.to
+    logDueOk(c3.stages[0], DONA, '2026-11-10', ped.to, ped.by)
+    c3.stages[0].pendingDue = null
+    const s3 = salvar(s2, c3, 'dona', DONA)
+    expect(s3.stages[0].due).toBe('2026-12-01')
+    expect(s3.stages[0].pendingDue).toBeNull()
+    expect(ultimo(s3)).toMatchObject({ t: 'due_ok', req: JOAO, to: '2026-12-01' })
+  })
+
+  it('dona recusa: a data não muda e fica registrado', () => {
+    const existente = proj([stage({ due: '2026-11-10', pendingDue: { to: '2026-12-01', by: JOAO, at: 1, reason: 'x' } })])
+    const c = structuredClone(existente)
+    logDueRej(c.stages[0], DONA, c.stages[0].pendingDue!.to, c.stages[0].pendingDue!.by)
+    c.stages[0].pendingDue = null
+    const s = salvar(existente, c, 'dona', DONA)
+    expect(s.stages[0].due).toBe('2026-11-10')
+    expect(s.stages[0].pendingDue).toBeNull()
+    expect(ultimo(s)).toMatchObject({ t: 'due_rej', req: JOAO })
   })
 })
 

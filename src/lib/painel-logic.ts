@@ -161,7 +161,15 @@ export function travarPrazo(
   for (const n of incoming.stages) {
     const e = existente.stages.find((x) => x.code === n.code)
     if (!e) continue
-    // 1) a data nunca muda pela mão da equipe.
+
+    // 0) etapa SEM prazo ainda → a equipe pode DEFINIR a 1ª data direto
+    //    (não há nada a travar). A partir daí, trocar só com aprovação.
+    if (e.due === null) {
+      n.pendingDue = null
+      continue
+    }
+
+    // 1) já tem prazo → a data não muda pela mão da equipe.
     n.due = e.due
 
     const ePed = e.pendingDue ?? null

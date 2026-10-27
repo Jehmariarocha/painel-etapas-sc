@@ -197,7 +197,9 @@ export default function Painel({ email, papel }: { email: string; papel: 'dona' 
     const novo = iso || null
     const antigo = s.due || null
     if (novo === antigo) return
-    if (ehDona) {
+    // Dona muda direto. Equipe também pode DEFINIR a 1ª data (quando a etapa
+    // ainda não tem prazo); depois disso, trocar só via pedido com aprovação.
+    if (ehDona || !antigo) {
       mutar(projId, (p) => {
         const st = p.stages.find((x) => x.code === code)
         if (!st) return
@@ -914,13 +916,17 @@ function LinhaEtapa({
           <label className="flex items-center gap-1">
             Prazo:
             <input
-              type="date" value={st.due || ''}
-              onChange={(e) => onPrazo(e.target.value)}
-              title={ehDona ? 'Alterar prazo' : 'Pedir mudança de prazo (precisa de aprovação)'}
+              // Age só quando termina de preencher (onBlur), não a cada tecla —
+              // senão ao digitar o ano (ex.: "2" de 2026) dispararia como 0002.
+              // `key` remonta o campo quando a data/pedido muda, pra refletir o estado.
+              key={`${st.code}-${st.due ?? 'x'}-${st.pendingDue?.at ?? 0}`}
+              type="date" defaultValue={st.due || ''}
+              onBlur={(e) => onPrazo(e.target.value)}
+              title={ehDona ? 'Alterar prazo' : st.due ? 'Pedir mudança de prazo (precisa de aprovação)' : 'Definir prazo'}
               className="rounded-md border px-1.5 py-0.5 tnum"
               style={{ borderColor: C.linha, background: C.surf2 }}
             />
-            {!ehDona && <span title="Mudança de prazo precisa de aprovação" style={{ color: C.faint }}>🔒</span>}
+            {!ehDona && st.due && <span title="Mudança de prazo precisa de aprovação" style={{ color: C.faint }}>🔒</span>}
           </label>
           {over && (
             <span className="rounded-[5px] px-1.5 py-px text-[11px] font-bold uppercase" style={{ color: C.danger, background: C.dangerSoft }}>vencida</span>
