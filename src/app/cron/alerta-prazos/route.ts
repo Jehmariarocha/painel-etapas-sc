@@ -169,7 +169,7 @@ export async function GET(req: NextRequest) {
   // só entrega ao e-mail dono da conta Resend — por isso FIXO no e-mail da conta,
   // sem depender de variável. Para enviar ao @1comodo.online ou à equipe, basta
   // verificar o domínio 1comodo.online em resend.com/domains e trocar o `from`.
-  const destino = process.env.ALERTA_EMAIL || 'jessik.mbr@gmail.com'
+  const destino = 'jessik.mbr@gmail.com'
 
   const assunto = `Painel de Etapas — ${vencidas.length} atrasada(s), ${aVencer.length} a vencer`
   try {
