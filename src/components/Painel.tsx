@@ -38,6 +38,52 @@ type Modal =
   | { kind: 'import' }
   | null
 
+/** Pede permissão de notificação do navegador (1x), a partir de um clique. */
+function pedirPermissaoNotificacao() {
+  try {
+    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
+      void Notification.requestPermission()
+    }
+  } catch {}
+}
+
+/** Dispara uma notificação de teste na hora (pra conferir se o Windows mostra). */
+async function testarNotificacao() {
+  try {
+    if (typeof window === 'undefined' || !('Notification' in window)) {
+      alert('Este navegador não suporta notificações.')
+      return
+    }
+    let perm = Notification.permission
+    if (perm === 'default') perm = await Notification.requestPermission()
+    if (perm === 'granted') {
+      new Notification('⏰ Teste de aviso — Painel de Etapas', {
+        body: 'Se você está vendo isto, as notificações do Windows funcionam!',
+        icon: '/logo.png',
+        requireInteraction: true,
+      })
+    } else {
+      alert('As notificações estão bloqueadas. Libere no ícone ao lado do endereço (cadeado) → Notificações → Permitir.')
+    }
+  } catch (e) {
+    alert('Não consegui disparar a notificação: ' + (e instanceof Error ? e.message : String(e)))
+  }
+}
+
+/** Mostra uma notificação do sistema (Windows) avisando pra reativar. */
+function notificarReativar(projeto: string, etapa: string) {
+  try {
+    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+      new Notification('⏰ Reative seu cronômetro', {
+        body: `${projeto} · ${etapa} pausou após 1h. Reative se ainda estiver trabalhando.`,
+        icon: '/logo.png',
+        tag: 'reativar-cronometro',
+        requireInteraction: true,
+      })
+    }
+  } catch {}
+}
+
 export default function Painel({ email, papel }: { email: string; papel: 'dona' | 'equipe' }) {
   const ehDona = papel === 'dona'
   const [projetos, setProjetos] = useState<Projeto[]>([])
@@ -57,6 +103,11 @@ export default function Painel({ email, papel }: { email: string; papel: 'dona' 
   modalRef.current = modal
   // Momento da última gravação local, para o polling não atropelar.
   const lastPersistRef = useRef(0)
+  // Qual pessoa da equipe é o usuário logado (casando pelo e-mail). Serve para
+  // mandar o alerta de reativar só pra quem é dono do cronômetro.
+  const minhaPessoaId = equipe.find((p) => p.email && p.email.toLowerCase() === email.toLowerCase())?.id ?? null
+  const minhaPessoaIdRef = useRef<string | null>(null)
+  minhaPessoaIdRef.current = minhaPessoaId
 
   const personById = useCallback((id: string | null) => equipe.find((p) => p.id === id) || null, [equipe])
 
@@ -98,8 +149,14 @@ export default function Painel({ email, papel }: { email: string; papel: 'dona' 
         setProjetos((atual) => atual.map((p) => (p.id === mudou!.id ? { ...mudou! } : p)))
         void persistir(mudou)
       }
-      // Pediu reativação: mostra o alerta (se não houver outro já aberto).
-      if (pausou) setAlertaReativar((atual) => atual ?? pausou)
+      // Pediu reativação: só avisa a PESSOA dona do cronômetro (casada pelo
+      // e-mail logado). Nas telas dos outros, nada aparece.
+      if (pausou && pausou.personId === minhaPessoaIdRef.current) {
+        setAlertaReativar((atual) => atual ?? pausou)
+        const p = projetosRef.current.find((x) => x.id === pausou!.projId)
+        const st = p?.stages.find((s) => s.code === pausou!.code)
+        if (p && st) notificarReativar(p.name, `${st.code} ${st.name}`)
+      }
       setTick((x) => x + 1)
     }, 1000)
     return () => clearInterval(t)
@@ -201,6 +258,7 @@ export default function Painel({ email, papel }: { email: string; papel: 'dona' 
   }
 
   function requestStart(projId: string, code: string) {
+    pedirPermissaoNotificacao() // aproveita o clique pra pedir permissão (1x)
     if (!equipe.length) {
       iniciarEtapa(projId, code, null)
       return
@@ -208,19 +266,36 @@ export default function Painel({ email, papel }: { email: string; papel: 'dona' 
     setModal({ kind: 'start', projId, code })
   }
 
+  // Anti-burla: um cronômetro rodando só pode ser parado pela própria pessoa
+  // que o iniciou (ou pela dona, como exceção). Ninguém mexe no do outro.
+  function podeParar(st: Etapa): boolean {
+    return !st.startedAt || st.startedBy === minhaPessoaId || ehDona
+  }
+  function avisarBloqueio(st: Etapa) {
+    const n = personById(st.startedBy)?.name || 'outra pessoa'
+    alert(`Este cronômetro é de ${n}. Só ${n} (ou a responsável) pode pausar.`)
+  }
+
   function pausarEtapa(projId: string, code: string) {
+    const st = projetosRef.current.find((x) => x.id === projId)?.stages.find((s) => s.code === code)
+    if (st && !podeParar(st)) { avisarBloqueio(st); return }
     mutar(projId, (p) => {
       const s = p.stages.find((x) => x.code === code)
       if (s) stopRun(s, false)
     })
   }
   function concluirEtapa(projId: string, code: string) {
+    const st = projetosRef.current.find((x) => x.id === projId)?.stages.find((s) => s.code === code)
+    if (st && st.startedAt && !podeParar(st)) { avisarBloqueio(st); return }
     mutar(projId, (p) => {
       const s = p.stages.find((x) => x.code === code)
       if (s) toggleDone(s)
     })
   }
   function moverEtapa(projId: string, code: string) {
+    const p0 = projetosRef.current.find((x) => x.id === projId)
+    const bloqueada = p0?.stages.find((s) => s.startedAt && s.code !== code && !podeParar(s))
+    if (bloqueada) { avisarBloqueio(bloqueada); return }
     mutar(projId, (p) => moveToStage(p, code))
   }
   function setPrevisto(projId: string, code: string, horas: number) {
@@ -386,6 +461,7 @@ export default function Painel({ email, papel }: { email: string; papel: 'dona' 
             onResponsavel={(code, pid) => setResponsavel(projeto.id, code, pid)}
             onPrazo={(code, iso) => aoMudarPrazo(projeto.id, code, iso)}
             ehDona={ehDona}
+            minhaPessoaId={minhaPessoaId}
             onAprovarPrazo={(code) => aprovarPrazo(projeto.id, code)}
             onRecusarPrazo={(code) => recusarPrazo(projeto.id, code)}
             onEditResp={() => setModal({ kind: 'resp', projId: projeto.id })}
@@ -409,6 +485,8 @@ export default function Painel({ email, papel }: { email: string; papel: 'dona' 
             onExcluir={(id) => excluirProjeto(id)}
             onDropMover={(projId, code) => moverEtapa(projId, code)}
             dragId={dragId}
+            ehDona={ehDona}
+            minhaPessoaId={minhaPessoaId}
           />
         )}
       </main>
@@ -575,7 +653,7 @@ function Avatares({ ids, personById }: { ids: string[]; personById: (id: string)
 
 /* ================= Quadro (kanban) ================= */
 function Quadro({
-  projetos, personById, onImportar, onAbrir, onPlayPause, onExcluir, onDropMover, dragId,
+  projetos, personById, onImportar, onAbrir, onPlayPause, onExcluir, onDropMover, dragId, ehDona, minhaPessoaId,
 }: {
   projetos: Projeto[]
   personById: (id: string) => Pessoa | null
@@ -585,6 +663,8 @@ function Quadro({
   onExcluir: (id: string) => void
   onDropMover: (projId: string, code: string) => void
   dragId: React.MutableRefObject<string | null>
+  ehDona: boolean
+  minhaPessoaId: string | null
 }) {
   const [over, setOver] = useState<string | null>(null)
   const colunas = [
@@ -672,6 +752,8 @@ function Quadro({
                       onPlayPause={() => onPlayPause(p)}
                       onExcluir={() => onExcluir(p.id)}
                       dragId={dragId}
+                      ehDona={ehDona}
+                      minhaPessoaId={minhaPessoaId}
                     />
                   ))
                 )}
@@ -686,7 +768,7 @@ function Quadro({
 }
 
 function Card({
-  projeto: p, personById, onAbrir, onPlayPause, onExcluir, dragId,
+  projeto: p, personById, onAbrir, onPlayPause, onExcluir, dragId, ehDona, minhaPessoaId,
 }: {
   projeto: Projeto
   personById: (id: string) => Pessoa | null
@@ -694,11 +776,15 @@ function Card({
   onPlayPause: () => void
   onExcluir: () => void
   dragId: React.MutableRefObject<string | null>
+  ehDona: boolean
+  minhaPessoaId: string | null
 }) {
   const t = projectTotals(p)
   const pct = t.total ? Math.round((t.done / t.total) * 100) : 0
   const rodandoEtapa = p.stages.find((s) => s.startedAt)
   const cur = currentStage(p)
+  // Cronômetro rodando de OUTRA pessoa: não deixa esta pessoa pausar.
+  const travado = !!rodandoEtapa && rodandoEtapa.startedBy !== minhaPessoaId && !ehDona
 
   const respNomes = (p.people || [])
     .map((id) => {
@@ -787,13 +873,11 @@ function Card({
           {cur && (
             <button
               aria-label={rodandoEtapa ? `Pausar ${p.name}` : `Iniciar cronômetro de ${p.name}`}
-              title={rodandoEtapa ? 'Pausar' : `Iniciar ${cur.code}`}
-              onClick={(e) => { e.stopPropagation(); onPlayPause() }}
-              className="grid h-[30px] w-9 place-items-center rounded-lg border"
-              style={{
-                background: rodandoEtapa ? C.amarelo : C.amarelo,
-                borderColor: C.amarelo, color: C.onAccent,
-              }}
+              title={travado ? 'Cronômetro de outra pessoa — só ela pausa' : rodandoEtapa ? 'Pausar' : `Iniciar ${cur.code}`}
+              onClick={(e) => { e.stopPropagation(); if (!travado) onPlayPause() }}
+              disabled={travado}
+              className="grid h-[30px] w-9 place-items-center rounded-lg border disabled:cursor-not-allowed disabled:opacity-40"
+              style={{ background: C.amarelo, borderColor: C.amarelo, color: C.onAccent }}
             >
               {rodandoEtapa ? '⏸' : '▶'}
             </button>
@@ -806,7 +890,7 @@ function Card({
 
 /* ================= Detalhe do projeto ================= */
 function Detalhe({
-  projeto: p, equipe, personById, onVoltar, onPlay, onPause, onDone, onPrevisto, onResponsavel, onPrazo, ehDona, onAprovarPrazo, onRecusarPrazo, onEditResp, onLog, onExcluir,
+  projeto: p, equipe, personById, onVoltar, onPlay, onPause, onDone, onPrevisto, onResponsavel, onPrazo, ehDona, minhaPessoaId, onAprovarPrazo, onRecusarPrazo, onEditResp, onLog, onExcluir,
 }: {
   projeto: Projeto
   equipe: Pessoa[]
@@ -819,6 +903,7 @@ function Detalhe({
   onResponsavel: (code: string, pid: string) => void
   onPrazo: (code: string, iso: string) => void
   ehDona: boolean
+  minhaPessoaId: string | null
   onAprovarPrazo: (code: string) => void
   onRecusarPrazo: (code: string) => void
   onEditResp: () => void
@@ -880,6 +965,7 @@ function Detalhe({
             onAprovarPrazo={() => onAprovarPrazo(st.code)}
             onRecusarPrazo={() => onRecusarPrazo(st.code)}
             onLog={() => onLog(st.code)}
+            travado={!!st.startedAt && st.startedBy !== minhaPessoaId && !ehDona}
           />
         ))}
       </div>
@@ -898,7 +984,7 @@ function Stat({ cap, big, sub, bigColor }: { cap: string; big: string; sub: stri
 }
 
 function LinhaEtapa({
-  st, equipe, personById, onPlay, onPause, onDone, onPrevisto, onResponsavel, onPrazo, ehDona, onAprovarPrazo, onRecusarPrazo, onLog,
+  st, equipe, personById, onPlay, onPause, onDone, onPrevisto, onResponsavel, onPrazo, ehDona, onAprovarPrazo, onRecusarPrazo, onLog, travado,
 }: {
   st: Etapa
   equipe: Pessoa[]
@@ -913,6 +999,7 @@ function LinhaEtapa({
   onAprovarPrazo: () => void
   onRecusarPrazo: () => void
   onLog: () => void
+  travado: boolean
 }) {
   const sec = liveSeconds(st)
   const rodando = !!st.startedAt
@@ -1007,15 +1094,17 @@ function LinhaEtapa({
         </div>
         <div className="flex gap-1.5">
           <IconBtn
-            title={rodando ? 'Pausar' : 'Iniciar'}
+            title={rodando && travado ? 'Cronômetro de outra pessoa — só ela pausa' : rodando ? 'Pausar' : 'Iniciar'}
             onClick={rodando ? onPause : onPlay}
-            style={{ background: rodando ? C.amarelo : C.amarelo, borderColor: C.amarelo, color: C.onAccent }}
+            disabled={rodando && travado}
+            style={{ background: C.amarelo, borderColor: C.amarelo, color: C.onAccent }}
           >
             {rodando ? '⏸' : '▶'}
           </IconBtn>
           <IconBtn
-            title={st.status === 'concluida' ? 'Reabrir' : 'Concluir'}
+            title={rodando && travado ? 'Cronômetro de outra pessoa' : st.status === 'concluida' ? 'Reabrir' : 'Concluir'}
             onClick={onDone}
+            disabled={rodando && travado}
             style={st.status === 'concluida' ? { background: C.done, borderColor: C.done, color: '#fff' } : undefined}
           >
             ✓
@@ -1027,13 +1116,14 @@ function LinhaEtapa({
   )
 }
 
-function IconBtn({ children, onClick, title, style }: { children: React.ReactNode; onClick: () => void; title: string; style?: React.CSSProperties }) {
+function IconBtn({ children, onClick, title, style, disabled }: { children: React.ReactNode; onClick: () => void; title: string; style?: React.CSSProperties; disabled?: boolean }) {
   return (
     <button
       title={title}
       aria-label={title}
       onClick={onClick}
-      className="grid h-[38px] w-[38px] place-items-center rounded-lg border text-base"
+      disabled={disabled}
+      className="grid h-[38px] w-[38px] place-items-center rounded-lg border text-base disabled:cursor-not-allowed disabled:opacity-40"
       style={{ borderColor: C.linha, background: C.surf2, color: '#1a1a1a', ...style }}
     >
       {children}
@@ -1093,12 +1183,27 @@ function PedirPrazoModal({ etapa, to, onFechar, onEnviar }: { etapa: Etapa; to: 
 
 /** Alerta anti-burla: o cronômetro pausou sozinho após 1h e pede reativação. */
 function ReativarModal({ projeto, etapa, onReativar, onFechar }: { projeto: string; etapa: string; onReativar: () => void; onFechar: () => void }) {
+  const [perm, setPerm] = useState<string>(typeof window !== 'undefined' && 'Notification' in window ? Notification.permission : 'unsupported')
   return (
     <Scrim onFechar={onFechar}>
       <h3 className="text-lg font-bold">⏰ Ainda está trabalhando?</h3>
-      <p className="mb-4 text-[13px]" style={{ color: C.muted }}>
-        O cronômetro de <b>{projeto} · {etapa}</b> pausou sozinho após {MAX_RUN_HOURS}h. Reative para continuar contando o tempo.
+      <p className="mb-3 text-[13px]" style={{ color: C.muted }}>
+        O cronômetro de <b>{projeto} · {etapa}</b> pausou sozinho. Reative para continuar contando o tempo.
       </p>
+      {perm === 'granted' && (
+        <p className="mb-1 text-[12px]" style={{ color: C.muted }}>🔔 Avisos do Windows ativos — eles aparecem quando você está <b>fora</b> desta aba (em outro programa).</p>
+      )}
+      {perm === 'default' && (
+        <button
+          className="mb-1 rounded-md px-2 py-1 text-[12.5px] font-semibold"
+          style={{ background: C.soft, color: C.ink }}
+          onClick={async () => { try { setPerm(await Notification.requestPermission()) } catch {} }}
+        >🔔 Ativar avisos do Windows
+        </button>
+      )}
+      {perm === 'denied' && (
+        <p className="mb-1 text-[12px]" style={{ color: C.danger }}>🔔 Avisos bloqueados. Libere no ícone ao lado do endereço (cadeado) → Notificações → Permitir.</p>
+      )}
       <div className="mt-4 flex justify-end gap-2.5">
         <button className="btn2" onClick={onFechar}>Agora não</button>
         <button className="btn2-primary" onClick={onReativar}>Reativar</button>
@@ -1352,27 +1457,35 @@ function EquipeModal({ equipe, onFechar, onSalvar }: { equipe: Pessoa[]; onFecha
   const [lista, setLista] = useState<Pessoa[]>(equipe)
   const [nome, setNome] = useState('')
   const [funcao, setFuncao] = useState('')
+  const [emailNovo, setEmailNovo] = useState('')
   function add() {
     const n = nome.trim()
     if (!n) return
-    setLista((l) => [...l, { id: 'u' + Math.random().toString(36).slice(2, 8), name: n, role: funcao.trim() }])
+    setLista((l) => [...l, { id: 'u' + Math.random().toString(36).slice(2, 8), name: n, role: funcao.trim(), email: emailNovo.trim().toLowerCase() || undefined }])
     setNome('')
     setFuncao('')
+    setEmailNovo('')
   }
   return (
     <Scrim onFechar={() => { onSalvar(lista); onFechar() }}>
       <h3 className="text-lg font-bold">Equipe</h3>
-      <p className="mb-3 text-[13px]" style={{ color: C.muted }}>Pessoas do escritório e a função de cada uma, para marcar responsáveis.</p>
-      <div className="mb-3 flex max-h-60 flex-col gap-0.5 overflow-y-auto scrollbar-thin">
+      <p className="mb-2 text-[13px]" style={{ color: C.muted }}>Pessoas do escritório, a função e o e-mail de login de cada uma. O e-mail liga a pessoa à conta — assim o aviso do cronômetro vai pra pessoa certa.</p>
+      <button className="mb-3 rounded-md px-2 py-1 text-[12.5px] font-semibold" style={{ background: C.soft, color: C.ink }} onClick={() => void testarNotificacao()}>🔔 Testar notificação do Windows</button>
+      <div className="mb-3 flex max-h-60 flex-col gap-1.5 overflow-y-auto scrollbar-thin">
         {lista.length === 0 && <p className="text-[13px]" style={{ color: C.muted }}>Nenhuma pessoa ainda.</p>}
         {lista.map((p) => (
-          <div key={p.id} className="flex items-center gap-2.5 py-1.5">
+          <div key={p.id} className="flex flex-wrap items-center gap-2 border-b py-2 last:border-0" style={{ borderColor: C.linha }}>
             <Avatar pessoa={p} />
-            <span className="flex-1 text-sm">{p.name}</span>
+            <span className="min-w-[70px] flex-1 text-sm">{p.name}</span>
             <input
               defaultValue={p.role} placeholder="Função"
               onBlur={(e) => setLista((l) => l.map((x) => (x.id === p.id ? { ...x, role: e.target.value.trim() } : x)))}
-              className="w-[118px] rounded-md border px-1.5 py-[3px] text-[12.5px]" style={{ borderColor: C.linha, background: C.surf2 }}
+              className="w-[96px] rounded-md border px-1.5 py-[3px] text-[12.5px]" style={{ borderColor: C.linha, background: C.surf2 }}
+            />
+            <input
+              defaultValue={p.email || ''} placeholder="e-mail de login" type="email"
+              onBlur={(e) => setLista((l) => l.map((x) => (x.id === p.id ? { ...x, email: e.target.value.trim().toLowerCase() || undefined } : x)))}
+              className="w-[170px] rounded-md border px-1.5 py-[3px] text-[12.5px]" style={{ borderColor: C.linha, background: C.surf2 }}
             />
             <button className="text-[13px] font-semibold" style={{ color: C.danger }} onClick={() => setLista((l) => l.filter((x) => x.id !== p.id))}>remover</button>
           </div>
@@ -1380,8 +1493,9 @@ function EquipeModal({ equipe, onFechar, onSalvar }: { equipe: Pessoa[]; onFecha
       </div>
       <Campo label="Adicionar pessoa">
         <div className="flex flex-wrap gap-2">
-          <input value={nome} onChange={(e) => setNome(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && add()} placeholder="Nome" className="input min-w-[100px] flex-1" />
-          <input value={funcao} onChange={(e) => setFuncao(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && add()} placeholder="Função" className="input min-w-[100px] flex-1" />
+          <input value={nome} onChange={(e) => setNome(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && add()} placeholder="Nome" className="input min-w-[90px] flex-1" />
+          <input value={funcao} onChange={(e) => setFuncao(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && add()} placeholder="Função" className="input min-w-[90px] flex-1" />
+          <input value={emailNovo} onChange={(e) => setEmailNovo(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && add()} placeholder="e-mail de login" type="email" className="input min-w-[140px] flex-1" />
           <button className="btn2" onClick={add}>Adicionar</button>
         </div>
       </Campo>

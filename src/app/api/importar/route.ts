@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
   const idsEquipe = new Set(equipe.map((p) => p.id))
   for (const p of equipeIn) {
     if (p && typeof p.id === 'string' && typeof p.name === 'string' && !idsEquipe.has(p.id)) {
-      equipe.push({ id: p.id, name: String(p.name).trim(), role: String(p.role || '').trim() })
+      equipe.push({ id: p.id, name: String(p.name).trim(), role: String(p.role || '').trim(), email: typeof p.email === 'string' && p.email.trim() ? p.email.trim().toLowerCase() : undefined })
       idsEquipe.add(p.id)
     }
   }

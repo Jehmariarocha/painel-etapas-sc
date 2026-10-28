@@ -76,6 +76,8 @@ export interface Pessoa {
   name: string
   /** função/cargo (Arquiteta, Projetista, Estagiário…). */
   role: string
+  /** e-mail de login (@domínio) — liga a pessoa à conta, p/ direcionar avisos. */
+  email?: string
 }
 
 /** As fases NBR que o escritório acompanha (Projeto Legal foi removida). */
