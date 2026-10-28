@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { ehSandbox } from '@/lib/chaves'
 import { lerCookieSessao, COOKIE_SESSAO } from '@/lib/sessao'
 import { listarProjetos, lerEquipe } from '@/lib/painel'
+import { tgEnviar } from '@/lib/telegram'
 import type { Projeto, Pessoa } from '@/lib/tipos'
 
 export const dynamic = 'force-dynamic'
@@ -112,6 +113,23 @@ function montarHtml(vencidas: Item[], aVencer: Item[]): string {
   </div>`
 }
 
+/** Versão em texto (HTML do Telegram) do resumo de prazos. */
+function montarTexto(vencidas: Item[], aVencer: Item[]): string {
+  const linha = (it: Item, atrasada: boolean) => {
+    const quando = atrasada
+      ? `venceu ${fmtData(it.due)} (há ${Math.abs(it.dias)}d)`
+      : it.dias === 0
+        ? `vence hoje (${fmtData(it.due)})`
+        : `vence em ${it.dias}d (${fmtData(it.due)})`
+    return `• <b>${esc(it.projeto)}</b> · ${esc(it.codigo)} ${esc(it.etapa)} — ${quando}`
+  }
+  const partes = [`⏰ <b>Painel de Etapas</b> — ${fmtData(hojeISO_BRT())}`]
+  if (vencidas.length) partes.push(`\n⚠️ <b>Atrasadas (${vencidas.length})</b>\n` + vencidas.map((i) => linha(i, true)).join('\n'))
+  if (aVencer.length) partes.push(`\n⏳ <b>A vencer (${aVencer.length})</b>\n` + aVencer.map((i) => linha(i, false)).join('\n'))
+  partes.push(`\n👉 ${APP_URL}`)
+  return partes.join('\n')
+}
+
 async function enviarEmail(to: string, subject: string, html: string) {
   const key = process.env.RESEND_API_KEY
   if (!key) throw new Error('RESEND_API_KEY ausente')
@@ -174,10 +192,28 @@ export async function GET(req: NextRequest) {
   const destino = 'jessik.mbr@gmail.com'
 
   const assunto = `Painel de Etapas — ${vencidas.length} atrasada(s), ${aVencer.length} a vencer`
+  const erroMsg = (e: unknown) => (e instanceof Error ? e.message : String(e))
+  const resultado: Record<string, unknown> = { ok: true, vencidas: vencidas.length, aVencer: aVencer.length }
+
+  // E-mail (Resend)
   try {
-    const resposta = await enviarEmail(destino, assunto, montarHtml(vencidas, aVencer))
-    return NextResponse.json({ ok: true, enviado: true, para: destino, vencidas: vencidas.length, aVencer: aVencer.length, resend: resposta })
+    resultado.email = { enviado: true, para: destino, resend: await enviarEmail(destino, assunto, montarHtml(vencidas, aVencer)) }
   } catch (e) {
-    return NextResponse.json({ ok: false, enviado: false, erro: e instanceof Error ? e.message : String(e) }, { status: 500 })
+    resultado.email = { enviado: false, erro: erroMsg(e) }
   }
+
+  // Telegram (se configurado): manda o resumo pro chat definido em TELEGRAM_CHAT_ALERTA.
+  const chatAlerta = process.env.TELEGRAM_CHAT_ALERTA
+  if (chatAlerta && process.env.TELEGRAM_BOT_TOKEN) {
+    try {
+      await tgEnviar(chatAlerta, montarTexto(vencidas, aVencer))
+      resultado.telegram = { enviado: true, para: chatAlerta }
+    } catch (e) {
+      resultado.telegram = { enviado: false, erro: erroMsg(e) }
+    }
+  } else {
+    resultado.telegram = { enviado: false, motivo: 'TELEGRAM_CHAT_ALERTA/TOKEN não configurado' }
+  }
+
+  return NextResponse.json(resultado)
 }
