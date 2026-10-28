@@ -134,9 +134,11 @@ export default function Painel({ email, papel }: { email: string; papel: 'dona' 
       let mudou: Projeto | null = null
       let pausou: { projId: string; code: string; personId: string | null } | null = null
       const atuais = projetosRef.current
+      // Cada janela só pausa (e avisa sobre) os cronômetros da PRÓPRIA pessoa,
+      // pra o aviso aparecer na tela de quem é o dono — não na de quem viu antes.
       for (const p of atuais) {
         for (const s of p.stages) {
-          if (s.startedAt) {
+          if (s.startedAt && s.startedBy === minhaPessoaIdRef.current) {
             const quem = s.startedBy // guarda antes do auto-pausa limpar
             if (autoPauseStage(s)) {
               mudou = p
@@ -171,9 +173,11 @@ export default function Painel({ email, papel }: { email: string; papel: 'dona' 
       if (modalRef.current || dragId.current) return
       if (Date.now() - lastPersistRef.current < 3000) return // ação local recente
       try {
-        const r = await fetch('/api/projetos')
-        const d = await r.json()
-        if (Array.isArray(d.projetos)) setProjetos(d.projetos)
+        const [rp, re] = await Promise.all([fetch('/api/projetos'), fetch('/api/equipe')])
+        const dp = await rp.json()
+        const de = await re.json()
+        if (Array.isArray(dp.projetos)) setProjetos(dp.projetos)
+        if (Array.isArray(de.equipe)) setEquipe(de.equipe)
       } catch {
         // rede instável: tenta de novo no próximo ciclo
       }
@@ -266,14 +270,14 @@ export default function Painel({ email, papel }: { email: string; papel: 'dona' 
     setModal({ kind: 'start', projId, code })
   }
 
-  // Anti-burla: um cronômetro rodando só pode ser parado pela própria pessoa
-  // que o iniciou (ou pela dona, como exceção). Ninguém mexe no do outro.
+  // Anti-burla: um cronômetro rodando só pode ser parado pela PRÓPRIA pessoa
+  // que o iniciou — nem a dona para o dos outros. O teto de 1h cuida dos esquecidos.
   function podeParar(st: Etapa): boolean {
-    return !st.startedAt || st.startedBy === minhaPessoaId || ehDona
+    return !st.startedAt || st.startedBy === minhaPessoaId
   }
   function avisarBloqueio(st: Etapa) {
     const n = personById(st.startedBy)?.name || 'outra pessoa'
-    alert(`Este cronômetro é de ${n}. Só ${n} (ou a responsável) pode pausar.`)
+    alert(`Este cronômetro é de ${n}. Só ${n} pode pausar.`)
   }
 
   function pausarEtapa(projId: string, code: string) {
@@ -485,7 +489,6 @@ export default function Painel({ email, papel }: { email: string; papel: 'dona' 
             onExcluir={(id) => excluirProjeto(id)}
             onDropMover={(projId, code) => moverEtapa(projId, code)}
             dragId={dragId}
-            ehDona={ehDona}
             minhaPessoaId={minhaPessoaId}
           />
         )}
@@ -653,7 +656,7 @@ function Avatares({ ids, personById }: { ids: string[]; personById: (id: string)
 
 /* ================= Quadro (kanban) ================= */
 function Quadro({
-  projetos, personById, onImportar, onAbrir, onPlayPause, onExcluir, onDropMover, dragId, ehDona, minhaPessoaId,
+  projetos, personById, onImportar, onAbrir, onPlayPause, onExcluir, onDropMover, dragId, minhaPessoaId,
 }: {
   projetos: Projeto[]
   personById: (id: string) => Pessoa | null
@@ -663,7 +666,6 @@ function Quadro({
   onExcluir: (id: string) => void
   onDropMover: (projId: string, code: string) => void
   dragId: React.MutableRefObject<string | null>
-  ehDona: boolean
   minhaPessoaId: string | null
 }) {
   const [over, setOver] = useState<string | null>(null)
@@ -752,7 +754,6 @@ function Quadro({
                       onPlayPause={() => onPlayPause(p)}
                       onExcluir={() => onExcluir(p.id)}
                       dragId={dragId}
-                      ehDona={ehDona}
                       minhaPessoaId={minhaPessoaId}
                     />
                   ))
@@ -768,7 +769,7 @@ function Quadro({
 }
 
 function Card({
-  projeto: p, personById, onAbrir, onPlayPause, onExcluir, dragId, ehDona, minhaPessoaId,
+  projeto: p, personById, onAbrir, onPlayPause, onExcluir, dragId, minhaPessoaId,
 }: {
   projeto: Projeto
   personById: (id: string) => Pessoa | null
@@ -776,15 +777,14 @@ function Card({
   onPlayPause: () => void
   onExcluir: () => void
   dragId: React.MutableRefObject<string | null>
-  ehDona: boolean
   minhaPessoaId: string | null
 }) {
   const t = projectTotals(p)
   const pct = t.total ? Math.round((t.done / t.total) * 100) : 0
   const rodandoEtapa = p.stages.find((s) => s.startedAt)
   const cur = currentStage(p)
-  // Cronômetro rodando de OUTRA pessoa: não deixa esta pessoa pausar.
-  const travado = !!rodandoEtapa && rodandoEtapa.startedBy !== minhaPessoaId && !ehDona
+  // Cronômetro rodando de OUTRA pessoa: ninguém além da própria pausa (nem a dona).
+  const travado = !!rodandoEtapa && rodandoEtapa.startedBy !== minhaPessoaId
 
   const respNomes = (p.people || [])
     .map((id) => {
@@ -965,7 +965,7 @@ function Detalhe({
             onAprovarPrazo={() => onAprovarPrazo(st.code)}
             onRecusarPrazo={() => onRecusarPrazo(st.code)}
             onLog={() => onLog(st.code)}
-            travado={!!st.startedAt && st.startedBy !== minhaPessoaId && !ehDona}
+            travado={!!st.startedAt && st.startedBy !== minhaPessoaId}
           />
         ))}
       </div>
