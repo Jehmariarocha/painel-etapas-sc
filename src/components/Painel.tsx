@@ -505,6 +505,7 @@ export default function Painel({ email, papel }: { email: string; papel: 'dona' 
       {modal?.kind === 'team' && (
         <EquipeModal
           equipe={equipe}
+          ehDona={ehDona}
           onFechar={() => setModal(null)}
           onSalvar={(nova) => { setEquipe(nova); void persistirEquipe(nova) }}
         />
@@ -1458,7 +1459,7 @@ function NovoProjetoModal({ equipe, onFechar, onCriar }: { equipe: Pessoa[]; onF
   )
 }
 
-function EquipeModal({ equipe, onFechar, onSalvar }: { equipe: Pessoa[]; onFechar: () => void; onSalvar: (e: Pessoa[]) => void }) {
+function EquipeModal({ equipe, ehDona, onFechar, onSalvar }: { equipe: Pessoa[]; ehDona: boolean; onFechar: () => void; onSalvar: (e: Pessoa[]) => void }) {
   const [lista, setLista] = useState<Pessoa[]>(equipe)
   const [nome, setNome] = useState('')
   const [funcao, setFuncao] = useState('')
@@ -1488,7 +1489,11 @@ function EquipeModal({ equipe, onFechar, onSalvar }: { equipe: Pessoa[]; onFecha
     // Só o botão "Pronto" salva.
     <Scrim onFechar={onFechar}>
       <h3 className="text-lg font-bold">Equipe</h3>
-      <p className="mb-2 text-[13px]" style={{ color: C.muted }}>Pessoas do escritório, a função e o e-mail de login de cada uma. O e-mail liga a pessoa à conta — assim o aviso do cronômetro vai pra pessoa certa.</p>
+      <p className="mb-2 text-[13px]" style={{ color: C.muted }}>
+        {ehDona
+          ? 'Pessoas do escritório, a função e o e-mail de login de cada uma. O e-mail liga a pessoa à conta — assim o aviso do cronômetro vai pra pessoa certa.'
+          : '🔒 Só a responsável pode editar a equipe. Você pode consultar os nomes e funções.'}
+      </p>
       <button className="mb-3 rounded-md px-2 py-1 text-[12.5px] font-semibold" style={{ background: C.soft, color: C.ink }} onClick={() => void testarNotificacao()}>🔔 Testar notificação do Windows</button>
       <div className="mb-3 flex max-h-60 flex-col gap-1.5 overflow-y-auto scrollbar-thin">
         {lista.length === 0 && <p className="text-[13px]" style={{ color: C.muted }}>Nenhuma pessoa ainda.</p>}
@@ -1496,30 +1501,40 @@ function EquipeModal({ equipe, onFechar, onSalvar }: { equipe: Pessoa[]; onFecha
           <div key={p.id} className="flex flex-wrap items-center gap-2 border-b py-2 last:border-0" style={{ borderColor: C.linha }}>
             <Avatar pessoa={p} />
             <span className="min-w-[70px] flex-1 text-sm">{p.name}</span>
-            <input
-              value={p.role} placeholder="Função"
-              onChange={(e) => setLista((l) => l.map((x) => (x.id === p.id ? { ...x, role: e.target.value } : x)))}
-              className="w-[96px] rounded-md border px-1.5 py-[3px] text-[12.5px]" style={{ borderColor: C.linha, background: C.surf2 }}
-            />
-            <input
-              value={p.email || ''} placeholder="e-mail de login" type="email"
-              onChange={(e) => setLista((l) => l.map((x) => (x.id === p.id ? { ...x, email: e.target.value } : x)))}
-              className="w-[170px] rounded-md border px-1.5 py-[3px] text-[12.5px]" style={{ borderColor: C.linha, background: C.surf2 }}
-            />
-            <button className="text-[13px] font-semibold" style={{ color: C.danger }} onClick={() => setLista((l) => l.filter((x) => x.id !== p.id))}>remover</button>
+            {ehDona ? (
+              <>
+                <input
+                  value={p.role} placeholder="Função"
+                  onChange={(e) => setLista((l) => l.map((x) => (x.id === p.id ? { ...x, role: e.target.value } : x)))}
+                  className="w-[96px] rounded-md border px-1.5 py-[3px] text-[12.5px]" style={{ borderColor: C.linha, background: C.surf2 }}
+                />
+                <input
+                  value={p.email || ''} placeholder="e-mail de login" type="email"
+                  onChange={(e) => setLista((l) => l.map((x) => (x.id === p.id ? { ...x, email: e.target.value } : x)))}
+                  className="w-[170px] rounded-md border px-1.5 py-[3px] text-[12.5px]" style={{ borderColor: C.linha, background: C.surf2 }}
+                />
+                <button className="text-[13px] font-semibold" style={{ color: C.danger }} onClick={() => setLista((l) => l.filter((x) => x.id !== p.id))}>remover</button>
+              </>
+            ) : (
+              <span className="text-[12.5px]" style={{ color: C.muted }}>{p.role || '—'}</span>
+            )}
           </div>
         ))}
       </div>
-      <Campo label="Adicionar pessoa">
-        <div className="flex flex-wrap gap-2">
-          <input value={nome} onChange={(e) => setNome(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && add()} placeholder="Nome" className="input min-w-[90px] flex-1" />
-          <input value={funcao} onChange={(e) => setFuncao(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && add()} placeholder="Função" className="input min-w-[90px] flex-1" />
-          <input value={emailNovo} onChange={(e) => setEmailNovo(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && add()} placeholder="e-mail de login" type="email" className="input min-w-[140px] flex-1" />
-          <button className="btn2" onClick={add}>Adicionar</button>
-        </div>
-      </Campo>
+      {ehDona && (
+        <Campo label="Adicionar pessoa">
+          <div className="flex flex-wrap gap-2">
+            <input value={nome} onChange={(e) => setNome(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && add()} placeholder="Nome" className="input min-w-[90px] flex-1" />
+            <input value={funcao} onChange={(e) => setFuncao(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && add()} placeholder="Função" className="input min-w-[90px] flex-1" />
+            <input value={emailNovo} onChange={(e) => setEmailNovo(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && add()} placeholder="e-mail de login" type="email" className="input min-w-[140px] flex-1" />
+            <button className="btn2" onClick={add}>Adicionar</button>
+          </div>
+        </Campo>
+      )}
       <div className="mt-2 flex justify-end">
-        <button className="btn2-primary" onClick={salvar}>Pronto</button>
+        {ehDona
+          ? <button className="btn2-primary" onClick={salvar}>Pronto</button>
+          : <button className="btn2-primary" onClick={onFechar}>Fechar</button>}
       </div>
       <EstiloModal />
     </Scrim>
