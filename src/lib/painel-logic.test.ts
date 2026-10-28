@@ -164,6 +164,18 @@ describe('secondsByPersonForProject — horas por pessoa', () => {
     expect(m['maria']).toBe(MAX_RUN_SECONDS)
   })
 
+  it('sessão antiga maior que o teto mantém a duração real (não recapa)', () => {
+    const now = 1_000_000_000_000
+    const s = stage({
+      log: [
+        { t: 'start', by: 'joao', at: now },
+        { t: 'pause', by: 'joao', at: now + 2 * 60 * 60 * 1000 }, // 2h (acima do teto de 1h)
+      ],
+    })
+    expect(secondsByPersonForProject(proj([s]))['joao']).toBe(2 * 60 * 60)
+    expect(workSessions(s)[0].seconds).toBe(2 * 60 * 60)
+  })
+
   it('workSessions casa início com fim e marca a sessão em curso', () => {
     const now = 1_000_000_000_000
     const encerrada = stage({

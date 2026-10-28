@@ -278,7 +278,10 @@ export function secondsByPerson(st: Etapa): Record<string, number> {
       openBy = e.by
       openAt = e.at
     } else if ((e.t === 'pause' || e.t === 'auto') && openAt) {
-      const sec = Math.min(MAX_RUN_SECONDS, Math.max(0, Math.round((e.at - openAt) / 1000)))
+      // Dura o que realmente durou (o `at` do `auto` já traz o teto da época).
+      // NÃO re-aplicar o teto atual aqui, senão sessões antigas encolhem e param
+      // de bater com o total gravado da etapa.
+      const sec = Math.max(0, Math.round((e.at - openAt) / 1000))
       const k = openBy || '—'
       acc[k] = (acc[k] || 0) + sec
       openBy = null
@@ -326,7 +329,9 @@ export function workSessions(st: Etapa): SessaoHoras[] {
       openBy = e.by
       openAt = e.at
     } else if ((e.t === 'pause' || e.t === 'auto') && openAt) {
-      const sec = Math.min(MAX_RUN_SECONDS, Math.max(0, Math.round((e.at - openAt) / 1000)))
+      // Duração real da sessão (o `at` do `auto` já traz o teto da época); não
+      // re-aplicar o teto atual, pra não encolher sessões antigas.
+      const sec = Math.max(0, Math.round((e.at - openAt) / 1000))
       out.push({ by: openBy, start: openAt, end: e.at, seconds: sec })
       openBy = null
       openAt = 0
