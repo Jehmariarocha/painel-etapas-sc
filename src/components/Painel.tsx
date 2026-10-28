@@ -442,6 +442,7 @@ export default function Painel({ email, papel }: { email: string; papel: 'dona' 
     <div className="min-h-screen">
       <Header
         email={email}
+        vinculo={equipe.find((p) => p.id === minhaPessoaId)?.name ?? null}
         onNovo={() => setModal({ kind: 'new' })}
         onEquipe={() => setModal({ kind: 'team' })}
         onRelatorio={() => setView('report')}
@@ -576,9 +577,10 @@ export default function Painel({ email, papel }: { email: string; papel: 'dona' 
 
 /* ================= Cabeçalho ================= */
 function Header({
-  email, onNovo, onEquipe, onRelatorio, onLogout,
+  email, vinculo, onNovo, onEquipe, onRelatorio, onLogout,
 }: {
   email: string
+  vinculo: string | null
   onNovo: () => void
   onEquipe: () => void
   onRelatorio: () => void
@@ -596,7 +598,10 @@ function Header({
           </p>
         </div>
         <span className="flex-1" />
-        <span className="hidden text-xs sm:inline" style={{ color: C.faint }}>{email}</span>
+        <span className="hidden text-xs sm:flex sm:flex-col sm:items-end sm:leading-tight" style={{ color: C.faint }}>
+          <span>{email}</span>
+          <span style={{ color: vinculo ? C.ink : C.danger }}>{vinculo ? `você é: ${vinculo}` : '⚠ login não vinculado a ninguém'}</span>
+        </span>
         <button className="btn-primary" onClick={onNovo}>+ Novo projeto</button>
         <button className="btn" onClick={onEquipe}>Equipe</button>
         <button className="btn" onClick={onRelatorio}>Relatório</button>
@@ -1466,8 +1471,22 @@ function EquipeModal({ equipe, onFechar, onSalvar }: { equipe: Pessoa[]; onFecha
     setFuncao('')
     setEmailNovo('')
   }
+  // Normaliza (trim/minúsculas) e salva. Os campos são controlados (value+onChange),
+  // então `lista` já está atualizada no clique — nada depende do "sair do campo".
+  function salvar() {
+    const limpa = lista.map((p) => ({
+      ...p,
+      name: p.name.trim(),
+      role: (p.role || '').trim(),
+      email: (p.email || '').trim().toLowerCase() || undefined,
+    }))
+    onSalvar(limpa)
+    onFechar()
+  }
   return (
-    <Scrim onFechar={() => { onSalvar(lista); onFechar() }}>
+    // Fechar clicando fora = cancelar (NÃO salva), pra não apagar dados sem querer.
+    // Só o botão "Pronto" salva.
+    <Scrim onFechar={onFechar}>
       <h3 className="text-lg font-bold">Equipe</h3>
       <p className="mb-2 text-[13px]" style={{ color: C.muted }}>Pessoas do escritório, a função e o e-mail de login de cada uma. O e-mail liga a pessoa à conta — assim o aviso do cronômetro vai pra pessoa certa.</p>
       <button className="mb-3 rounded-md px-2 py-1 text-[12.5px] font-semibold" style={{ background: C.soft, color: C.ink }} onClick={() => void testarNotificacao()}>🔔 Testar notificação do Windows</button>
@@ -1478,13 +1497,13 @@ function EquipeModal({ equipe, onFechar, onSalvar }: { equipe: Pessoa[]; onFecha
             <Avatar pessoa={p} />
             <span className="min-w-[70px] flex-1 text-sm">{p.name}</span>
             <input
-              defaultValue={p.role} placeholder="Função"
-              onBlur={(e) => setLista((l) => l.map((x) => (x.id === p.id ? { ...x, role: e.target.value.trim() } : x)))}
+              value={p.role} placeholder="Função"
+              onChange={(e) => setLista((l) => l.map((x) => (x.id === p.id ? { ...x, role: e.target.value } : x)))}
               className="w-[96px] rounded-md border px-1.5 py-[3px] text-[12.5px]" style={{ borderColor: C.linha, background: C.surf2 }}
             />
             <input
-              defaultValue={p.email || ''} placeholder="e-mail de login" type="email"
-              onBlur={(e) => setLista((l) => l.map((x) => (x.id === p.id ? { ...x, email: e.target.value.trim().toLowerCase() || undefined } : x)))}
+              value={p.email || ''} placeholder="e-mail de login" type="email"
+              onChange={(e) => setLista((l) => l.map((x) => (x.id === p.id ? { ...x, email: e.target.value } : x)))}
               className="w-[170px] rounded-md border px-1.5 py-[3px] text-[12.5px]" style={{ borderColor: C.linha, background: C.surf2 }}
             />
             <button className="text-[13px] font-semibold" style={{ color: C.danger }} onClick={() => setLista((l) => l.filter((x) => x.id !== p.id))}>remover</button>
@@ -1500,7 +1519,7 @@ function EquipeModal({ equipe, onFechar, onSalvar }: { equipe: Pessoa[]; onFecha
         </div>
       </Campo>
       <div className="mt-2 flex justify-end">
-        <button className="btn2-primary" onClick={() => { onSalvar(lista); onFechar() }}>Pronto</button>
+        <button className="btn2-primary" onClick={salvar}>Pronto</button>
       </div>
       <EstiloModal />
     </Scrim>
