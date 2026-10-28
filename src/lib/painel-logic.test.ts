@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { travarPrazo, logDueChange, logDueReq, logDueOk, logDueRej } from './painel-logic'
+import { travarPrazo, logDueChange, logDueReq, logDueOk, logDueRej, autoPauseStage, secondsByPersonForProject, workSessions } from './painel-logic'
+import { MAX_RUN_SECONDS } from './tipos'
 import type { Projeto, Etapa } from './tipos'
 
 /**
@@ -144,6 +145,56 @@ describe('fluxo completo prazo (cliente + servidor juntos)', () => {
     expect(s.stages[0].due).toBe('2026-11-10')
     expect(s.stages[0].pendingDue).toBeNull()
     expect(ultimo(s)).toMatchObject({ t: 'due_rej', req: JOAO })
+  })
+})
+
+describe('secondsByPersonForProject — horas por pessoa', () => {
+  it('soma as horas de cada pessoa a partir do histórico (com teto por sessão)', () => {
+    const now = 1_000_000_000_000
+    const s = stage({
+      log: [
+        { t: 'start', by: 'joao', at: now },
+        { t: 'pause', by: 'joao', at: now + 30 * 60 * 1000 }, // 30 min
+        { t: 'start', by: 'maria', at: now + 60 * 60 * 1000 },
+        { t: 'auto', by: 'maria', at: now + 60 * 60 * 1000 + MAX_RUN_SECONDS * 1000 }, // teto 1h
+      ],
+    })
+    const m = secondsByPersonForProject(proj([s]))
+    expect(m['joao']).toBe(30 * 60)
+    expect(m['maria']).toBe(MAX_RUN_SECONDS)
+  })
+
+  it('workSessions casa início com fim e marca a sessão em curso', () => {
+    const now = 1_000_000_000_000
+    const encerrada = stage({
+      log: [
+        { t: 'start', by: 'joao', at: now },
+        { t: 'pause', by: 'joao', at: now + 20 * 60 * 1000 },
+      ],
+    })
+    const ss = workSessions(encerrada)
+    expect(ss.length).toBe(1)
+    expect(ss[0]).toMatchObject({ by: 'joao', start: now, end: now + 20 * 60 * 1000, seconds: 20 * 60 })
+
+    const rodando = stage({ startedAt: Date.now() - 5 * 60 * 1000, startedBy: 'maria', log: [{ t: 'start', by: 'maria', at: Date.now() - 5 * 60 * 1000 }] })
+    const sr = workSessions(rodando)
+    expect(sr[sr.length - 1].end).toBeNull()
+  })
+})
+
+describe('autoPauseStage — anti-burla (teto de 1h)', () => {
+  it('pausa ao passar do teto e conta no máximo 1h (não o tempo "solto")', () => {
+    const s = stage({ status: 'andamento', startedAt: Date.now() - (MAX_RUN_SECONDS + 600) * 1000, startedBy: 'p1', seconds: 0 })
+    expect(autoPauseStage(s)).toBe(true)
+    expect(s.startedAt).toBeNull()
+    expect(s.seconds).toBe(MAX_RUN_SECONDS)
+    expect(s.log[s.log.length - 1].t).toBe('auto')
+  })
+
+  it('não pausa antes do teto', () => {
+    const s = stage({ status: 'andamento', startedAt: Date.now() - 60 * 1000, startedBy: 'p1' })
+    expect(autoPauseStage(s)).toBe(false)
+    expect(s.startedAt).not.toBeNull()
   })
 })
 

@@ -1,11 +1,11 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { CODES, ETAPAS_MODELO, MAX_RUN_HOURS, type Projeto, type Pessoa, type Etapa, type EventoLog, type PedidoPrazo } from '@/lib/tipos'
+import { CODES, ETAPAS_MODELO, MAX_RUN_HOURS, MAX_RUN_SECONDS, type Projeto, type Pessoa, type Etapa, type EventoLog, type PedidoPrazo } from '@/lib/tipos'
 import {
   liveSeconds, fmtClock, fmtHours, fmtHoursNum, fmtTime, fmtDateTime, fmtDate, daysUntil,
   projectTotals, currentStage, startStage, stopRun, toggleDone, moveToStage, autoPauseStage,
-  logDueChange, logDueReq, logDueOk, logDueRej,
+  logDueChange, logDueReq, logDueOk, logDueRej, secondsByPersonForProject, workSessions,
 } from '@/lib/painel-logic'
 
 /* ---------------- cores da marca ---------------- */
@@ -47,9 +47,16 @@ export default function Painel({ email, papel }: { email: string; papel: 'dona' 
   const [openId, setOpenId] = useState<string | null>(null)
   const [modal, setModal] = useState<Modal>(null)
   const [, setTick] = useState(0)
+  // Alerta "reative o cronômetro" quando uma etapa pausa sozinha após 1h.
+  const [alertaReativar, setAlertaReativar] = useState<{ projId: string; code: string; personId: string | null } | null>(null)
   const dragId = useRef<string | null>(null)
   const projetosRef = useRef(projetos)
   projetosRef.current = projetos
+  // Espelho do modal para o polling saber se há interação em curso.
+  const modalRef = useRef<Modal>(null)
+  modalRef.current = modal
+  // Momento da última gravação local, para o polling não atropelar.
+  const lastPersistRef = useRef(0)
 
   const personById = useCallback((id: string | null) => equipe.find((p) => p.id === id) || null, [equipe])
 
@@ -74,11 +81,16 @@ export default function Painel({ email, papel }: { email: string; papel: 'dona' 
   useEffect(() => {
     const t = setInterval(() => {
       let mudou: Projeto | null = null
+      let pausou: { projId: string; code: string; personId: string | null } | null = null
       const atuais = projetosRef.current
       for (const p of atuais) {
         for (const s of p.stages) {
-          if (s.startedAt && autoPauseStage(s)) {
-            mudou = p
+          if (s.startedAt) {
+            const quem = s.startedBy // guarda antes do auto-pausa limpar
+            if (autoPauseStage(s)) {
+              mudou = p
+              pausou = { projId: p.id, code: s.code, personId: quem }
+            }
           }
         }
       }
@@ -86,20 +98,45 @@ export default function Painel({ email, papel }: { email: string; papel: 'dona' 
         setProjetos((atual) => atual.map((p) => (p.id === mudou!.id ? { ...mudou! } : p)))
         void persistir(mudou)
       }
+      // Pediu reativação: mostra o alerta (se não houver outro já aberto).
+      if (pausou) setAlertaReativar((atual) => atual ?? pausou)
       setTick((x) => x + 1)
     }, 1000)
     return () => clearInterval(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  /* -------- atualização automática: busca o que os outros fizeram -------- */
+  useEffect(() => {
+    const t = setInterval(async () => {
+      // Não atualiza durante uma interação (modal aberto, arrastando um card),
+      // para não atrapalhar. O cronômetro em curso continua (vem do servidor).
+      if (modalRef.current || dragId.current) return
+      if (Date.now() - lastPersistRef.current < 3000) return // ação local recente
+      try {
+        const r = await fetch('/api/projetos')
+        const d = await r.json()
+        if (Array.isArray(d.projetos)) setProjetos(d.projetos)
+      } catch {
+        // rede instável: tenta de novo no próximo ciclo
+      }
+    }, 20000)
+    return () => clearInterval(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   /* ---------------- persistência ---------------- */
   async function persistir(p: Projeto) {
+    // Marca a ação local: o polling não sobrescreve nos próximos segundos,
+    // enquanto o servidor ainda não confirmou a gravação.
+    lastPersistRef.current = Date.now()
     try {
       await fetch(`/api/projetos/${p.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(p),
       })
+      lastPersistRef.current = Date.now()
     } catch {
       /* mantém o estado local; numa próxima a gente trata reconexão */
     }
@@ -125,30 +162,40 @@ export default function Painel({ email, papel }: { email: string; papel: 'dona' 
     void persistir(c)
   }
 
-  function acharRodando(): { projId: string; code: string } | null {
+  // Um cronômetro por PESSOA: devolve os cronômetros que JÁ estão rodando
+  // iniciados por esta pessoa (para pausá-los ao iniciar outro). Pessoas
+  // diferentes rodam ao mesmo tempo sem se atrapalhar.
+  function rodandoDaPessoa(personId: string | null): { projId: string; code: string }[] {
+    const out: { projId: string; code: string }[] = []
     for (const p of projetosRef.current) {
-      for (const s of p.stages) if (s.startedAt) return { projId: p.id, code: s.code }
+      for (const s of p.stages) {
+        if (s.startedAt && s.startedBy === personId) out.push({ projId: p.id, code: s.code })
+      }
     }
-    return null
+    return out
   }
 
   /* ---------------- ações de etapa ---------------- */
   function iniciarEtapa(projId: string, code: string, personId: string | null) {
-    const running = acharRodando()
+    const anteriores = rodandoDaPessoa(personId) // só os cronômetros DESSA pessoa
     const ids = new Set<string>([projId])
-    if (running) ids.add(running.projId)
+    anteriores.forEach((r) => ids.add(r.projId))
     // Clona os afetados AGORA (fora do updater), aplica e grava.
     const clones = new Map<string, Projeto>()
     for (const id of ids) {
       const orig = projetosRef.current.find((x) => x.id === id)
       if (orig) clones.set(id, structuredClone(orig))
     }
-    if (running) {
-      const rs = clones.get(running.projId)?.stages.find((s) => s.code === running.code)
+    // Pausa os cronômetros anteriores da MESMA pessoa (nunca os de outras).
+    for (const r of anteriores) {
+      const rs = clones.get(r.projId)?.stages.find((s) => s.code === r.code)
       if (rs) stopRun(rs, false)
     }
     const ts = clones.get(projId)?.stages.find((s) => s.code === code)
-    if (ts) startStage(ts, personId)
+    if (ts) {
+      if (ts.startedAt) stopRun(ts, false) // se já rodava (por outra pessoa), fecha a sessão antes
+      startStage(ts, personId)
+    }
     setProjetos((atual) => atual.map((p) => clones.get(p.id) || p))
     clones.forEach((c) => void persistir(c))
   }
@@ -325,7 +372,7 @@ export default function Painel({ email, papel }: { email: string; papel: 'dona' 
         {loading ? (
           <p className="text-sm" style={{ color: C.muted }}>Carregando…</p>
         ) : view === 'report' ? (
-          <Relatorio projetos={projetos} onVoltar={() => setView('board')} />
+          <Relatorio projetos={projetos} onVoltar={() => setView('board')} ehDona={ehDona} equipe={equipe} />
         ) : view === 'detail' && projeto ? (
           <Detalhe
             projeto={projeto}
@@ -429,6 +476,19 @@ export default function Painel({ email, papel }: { email: string; papel: 'dona' 
       {modal?.kind === 'import' && (
         <ImportModal onFechar={() => setModal(null)} onImportar={importar} />
       )}
+      {alertaReativar && (() => {
+        const p = projetos.find((x) => x.id === alertaReativar.projId)
+        const st = p?.stages.find((s) => s.code === alertaReativar.code)
+        if (!p || !st) return null
+        return (
+          <ReativarModal
+            projeto={p.name}
+            etapa={`${st.code} ${st.name}`}
+            onReativar={() => { iniciarEtapa(alertaReativar.projId, alertaReativar.code, alertaReativar.personId); setAlertaReativar(null) }}
+            onFechar={() => setAlertaReativar(null)}
+          />
+        )
+      })()}
     </div>
   )
 }
@@ -1031,10 +1091,28 @@ function PedirPrazoModal({ etapa, to, onFechar, onEnviar }: { etapa: Etapa; to: 
   )
 }
 
+/** Alerta anti-burla: o cronômetro pausou sozinho após 1h e pede reativação. */
+function ReativarModal({ projeto, etapa, onReativar, onFechar }: { projeto: string; etapa: string; onReativar: () => void; onFechar: () => void }) {
+  return (
+    <Scrim onFechar={onFechar}>
+      <h3 className="text-lg font-bold">⏰ Ainda está trabalhando?</h3>
+      <p className="mb-4 text-[13px]" style={{ color: C.muted }}>
+        O cronômetro de <b>{projeto} · {etapa}</b> pausou sozinho após {MAX_RUN_HOURS}h. Reative para continuar contando o tempo.
+      </p>
+      <div className="mt-4 flex justify-end gap-2.5">
+        <button className="btn2" onClick={onFechar}>Agora não</button>
+        <button className="btn2-primary" onClick={onReativar}>Reativar</button>
+      </div>
+      <EstiloModal />
+    </Scrim>
+  )
+}
+
 /* ================= Relatório ================= */
-function Relatorio({ projetos, onVoltar }: { projetos: Projeto[]; onVoltar: () => void }) {
+function Relatorio({ projetos, onVoltar, ehDona, equipe }: { projetos: Projeto[]; onVoltar: () => void; ehDona: boolean; equipe: Pessoa[] }) {
   const [gerando, setGerando] = useState(false)
   const hc = (sec: number) => (sec > 0 ? (sec / 3600).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) : '·')
+  const nome = (id: string | null) => { const pp = equipe.find((x) => x.id === id); return pp ? pp.name : '—' }
   const saldo = (real: number, est: number) => {
     if (!est) return { txt: '·', cor: C.muted }
     const d = (real - est) / 3600
@@ -1151,6 +1229,74 @@ function Relatorio({ projetos, onVoltar }: { projetos: Projeto[]; onVoltar: () =
                 </tfoot>
               </table>
             </div>
+
+            {ehDona && (() => {
+              const blocos = projetos.map((p) => {
+                const m = secondsByPersonForProject(p)
+                const linhas = Object.entries(m).filter(([, sec]) => sec > 0).sort((a, b) => b[1] - a[1])
+                return { p, linhas }
+              }).filter((b) => b.linhas.length > 0)
+              if (blocos.length === 0) return null
+              return (
+                <div className="mt-7">
+                  <h3 className="text-lg font-bold">Horas por pessoa <span className="text-[12px] font-normal" style={{ color: C.faint }}>(só você vê)</span></h3>
+                  <p className="mb-3 text-[12.5px]" style={{ color: C.muted }}>Quanto cada pessoa trabalhou em cada projeto.</p>
+                  <div className="flex flex-col gap-4">
+                    {blocos.map(({ p, linhas }) => (
+                      <div key={p.id}>
+                        <div className="mb-1 font-semibold">{p.name}</div>
+                        <div className="overflow-hidden rounded-lg border" style={{ borderColor: C.linha }}>
+                          {linhas.map(([pid, sec]) => (
+                            <div key={pid} className="flex items-center justify-between border-b px-3 py-1.5 text-[13px] last:border-0" style={{ borderColor: C.linha }}>
+                              <span><b>{pid === '—' ? '— (sem identificação)' : nome(pid)}</b></span>
+                              <span className="tnum font-semibold" style={{ color: C.ink }}>{fmtHoursNum(sec)} h</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )
+            })()}
+
+            {ehDona && (() => {
+              const mesmoDia = (a: number, b: number) => new Date(a).toDateString() === new Date(b).toDateString()
+              const blocos = projetos.map((p) => {
+                const sess = p.stages
+                  .flatMap((s) => workSessions(s).map((w) => ({ code: s.code, name: s.name, ...w })))
+                  .sort((a, b) => b.start - a.start)
+                return { p, sess }
+              }).filter((b) => b.sess.length > 0)
+              if (blocos.length === 0) return null
+              return (
+                <div className="mt-7">
+                  <h3 className="text-lg font-bold">Registro de horas <span className="text-[12px] font-normal" style={{ color: C.faint }}>(só você vê)</span></h3>
+                  <p className="mb-3 text-[12.5px]" style={{ color: C.muted }}>Início → fim de cada sessão do cronômetro, quem e quanto durou.</p>
+                  <div className="flex flex-col gap-4">
+                    {blocos.map(({ p, sess }) => (
+                      <div key={p.id}>
+                        <div className="mb-1 font-semibold">{p.name}</div>
+                        <div className="overflow-hidden rounded-lg border" style={{ borderColor: C.linha }}>
+                          {sess.map((it, i) => (
+                            <div key={i} className="flex items-center gap-2.5 border-b px-3 py-1.5 text-[13px] last:border-0" style={{ borderColor: C.linha }}>
+                              <span style={{ color: C.muted }}>▶</span>
+                              <span className="tnum whitespace-nowrap" style={{ color: C.faint }}>
+                                {fmtDateTime(it.start)} → {it.end === null ? 'em curso' : mesmoDia(it.start, it.end) ? fmtTime(it.end) : fmtDateTime(it.end)}
+                              </span>
+                              <span className="flex-1 min-w-0"><b>{nome(it.by)}</b></span>
+                              <span className="tnum whitespace-nowrap font-semibold" style={{ color: C.ink }}>{fmtHoursNum(it.seconds)} h</span>
+                              <span className="whitespace-nowrap" style={{ color: C.muted }}>{it.code} · {it.name}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )
+            })()}
+
             <div className="mt-3.5 text-[11.5px]" style={{ color: C.faint }}>
               Gerado em {new Date().toLocaleDateString('pt-BR')} · Painel de Etapas de Projeto · 1Comodo
             </div>

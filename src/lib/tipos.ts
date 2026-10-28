@@ -89,8 +89,12 @@ export const ETAPAS_MODELO: { code: string; name: string }[] = [
 
 export const CODES = ETAPAS_MODELO.map((e) => e.code)
 
-/** Auto-pausa: o cronômetro conta no máximo este tanto por sessão. */
-export const MAX_RUN_HOURS = 8
+/**
+ * Auto-pausa (anti-burla): o cronômetro conta no máximo este tanto por sessão.
+ * A cada 1h ele pausa sozinho e pede reativação — assim ninguém deixa rodando
+ * e sai; no máximo 1h "solta" sem alguém confirmar que está trabalhando.
+ */
+export const MAX_RUN_HOURS = 1
 export const MAX_RUN_SECONDS = MAX_RUN_HOURS * 3600
 
 export function etapasNovas(): Etapa[] {

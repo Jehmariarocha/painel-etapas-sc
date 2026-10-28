@@ -260,3 +260,81 @@ export function autoPauseStage(st: Etapa): boolean {
   }
   return false
 }
+
+// ---------------- horas por pessoa (para o relatório) ----------------
+
+/**
+ * Reconstrói, a partir do histórico, quantos segundos CADA pessoa trabalhou
+ * nesta etapa. Casa cada `start` com o `pause`/`auto` seguinte (mesmo teto por
+ * sessão) e soma pela pessoa que iniciou. Inclui a sessão em curso, se houver.
+ * Chave `'—'` = sessões sem pessoa identificada.
+ */
+export function secondsByPerson(st: Etapa): Record<string, number> {
+  const acc: Record<string, number> = {}
+  let openBy: string | null = null
+  let openAt = 0
+  for (const e of st.log || []) {
+    if (e.t === 'start') {
+      openBy = e.by
+      openAt = e.at
+    } else if ((e.t === 'pause' || e.t === 'auto') && openAt) {
+      const sec = Math.min(MAX_RUN_SECONDS, Math.max(0, Math.round((e.at - openAt) / 1000)))
+      const k = openBy || '—'
+      acc[k] = (acc[k] || 0) + sec
+      openBy = null
+      openAt = 0
+    }
+  }
+  // sessão rodando agora (ainda sem pause no log)
+  if (st.startedAt) {
+    const sec = Math.min(MAX_RUN_SECONDS, Math.max(0, Math.floor((Date.now() - st.startedAt) / 1000)))
+    const k = st.startedBy || '—'
+    acc[k] = (acc[k] || 0) + sec
+  }
+  return acc
+}
+
+/** Soma as horas por pessoa de todas as etapas de um projeto. */
+export function secondsByPersonForProject(p: Projeto): Record<string, number> {
+  const acc: Record<string, number> = {}
+  for (const st of p.stages) {
+    const m = secondsByPerson(st)
+    for (const k in m) acc[k] = (acc[k] || 0) + m[k]
+  }
+  return acc
+}
+
+/** Uma sessão de cronômetro: início, fim (null = em curso), quem e quanto contou. */
+export interface SessaoHoras {
+  by: string | null
+  start: number
+  end: number | null
+  seconds: number
+}
+
+/**
+ * Reconstrói as sessões de trabalho (início → fim) de uma etapa a partir do
+ * histórico, casando cada `start` com o `pause`/`auto` seguinte. A sessão em
+ * curso entra com `end: null`.
+ */
+export function workSessions(st: Etapa): SessaoHoras[] {
+  const out: SessaoHoras[] = []
+  let openBy: string | null = null
+  let openAt = 0
+  for (const e of st.log || []) {
+    if (e.t === 'start') {
+      openBy = e.by
+      openAt = e.at
+    } else if ((e.t === 'pause' || e.t === 'auto') && openAt) {
+      const sec = Math.min(MAX_RUN_SECONDS, Math.max(0, Math.round((e.at - openAt) / 1000)))
+      out.push({ by: openBy, start: openAt, end: e.at, seconds: sec })
+      openBy = null
+      openAt = 0
+    }
+  }
+  if (st.startedAt) {
+    const sec = Math.min(MAX_RUN_SECONDS, Math.max(0, Math.floor((Date.now() - st.startedAt) / 1000)))
+    out.push({ by: st.startedBy, start: st.startedAt, end: null, seconds: sec })
+  }
+  return out
+}
