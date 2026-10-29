@@ -73,6 +73,14 @@ A maior frente. Objetivo final: enxergar **rentabilidade** por projeto (horas co
 - **Alerta de prazos no Telegram:** o cron diário agora manda o resumo por **e-mail E Telegram**,
   automaticamente, às 9h — testado em produção, chega nos dois. ✅
 
+### Observação e justificativa de atraso (29/10/2026)
+Pedido depois de conversar com a equipe.
+- **Observação por etapa:** um campo livre (📝) em cada etapa para anotar o que for preciso.
+- **Justificativa de atraso:** ao concluir uma etapa **fora do prazo**, abre um aviso pedindo o
+  porquê — o motivo fica registrado na etapa (⚠️). Decisão sua: **por etapa, ao concluir atrasada**
+  (em vez de uma justificativa só no fim do projeto).
+- Os dois campos entram também na importação do protótipo, para não se perderem.
+
 ---
 
 ## Decisões importantes (e o porquê)
@@ -113,4 +121,4 @@ A maior frente. Objetivo final: enxergar **rentabilidade** por projeto (horas co
 
 ---
 
-*Histórico registrado em 28/10/2026. Trabalho em parceria — Jéssica (1Comodo) + Claude.*
+*Histórico registrado em 28/10/2026, atualizado em 29/10/2026. Trabalho em parceria — Jéssica (1Comodo) + Claude.*

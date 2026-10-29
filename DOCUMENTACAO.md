@@ -86,6 +86,12 @@ avisar automaticamente sobre prazos.
 - Janela de alerta: **de 2 dias antes até 2 dias depois** do prazo.
 - Envia um resumo por **e-mail** e por **Telegram** (os dois canais, independentes).
 
+### 4.7 Observação e justificativa de atraso
+- **Observação por etapa:** cada etapa tem um campo livre (📝) para anotações da equipe.
+  Salva ao sair do campo; fica junto com a etapa.
+- **Justificativa de atraso:** ao **concluir** uma etapa **depois do prazo**, abre um aviso
+  pedindo o porquê do atraso. O texto fica registrado na etapa (⚠️) e aparece no detalhe.
+
 ---
 
 ## 5. Como funciona por dentro (arquitetura)
@@ -117,7 +123,8 @@ vercel.json           # Agendamento do cron (0 12 * * * UTC = 9h BRT)
 ### 5.2 Modelo de dados (resumo)
 - **Projeto**: id, nome, cliente, responsáveis (pessoas), lista de **Etapas**.
 - **Etapa**: código (LV/EP/...), status, segundos trabalhados, horas previstas, prazo (`due`),
-  responsável, quem está cronometrando, **histórico (log)** e **pedido de prazo pendente**.
+  responsável, quem está cronometrando, **histórico (log)**, **pedido de prazo pendente**,
+  **observação livre** (`obs`) e **justificativa de atraso** (`justificativaAtraso`).
 - **Pessoa**: id, nome, função (role), **e-mail de login**.
 
 ### 5.3 Onde os dados ficam (Redis)
@@ -218,4 +225,4 @@ A Vercel faz o deploy automático. Variáveis de ambiente novas só valem após 
 
 ---
 
-*Documentação gerada em 28/10/2026.*
+*Documentação gerada em 28/10/2026. Atualizada em 29/10/2026 (observação por etapa + justificativa de atraso).*
