@@ -35,6 +35,7 @@ type Modal =
   | { kind: 'start'; projId: string; code: string }
   | { kind: 'log'; projId: string; code: string }
   | { kind: 'prazoReq'; projId: string; code: string; to: string | null }
+  | { kind: 'justAtraso'; projId: string; code: string }
   | { kind: 'import' }
   | null
 
@@ -290,10 +291,33 @@ export default function Painel({ email, papel }: { email: string; papel: 'dona' 
   }
   function concluirEtapa(projId: string, code: string) {
     const st = projetosRef.current.find((x) => x.id === projId)?.stages.find((s) => s.code === code)
-    if (st && st.startedAt && !podeParar(st)) { avisarBloqueio(st); return }
+    if (!st) return
+    if (st.startedAt && !podeParar(st)) { avisarBloqueio(st); return }
+    // Concluindo (não reabrindo) uma etapa ATRASADA → pede a justificativa antes.
+    const concluindo = st.status !== 'concluida'
+    const atrasada = !!st.due && (daysUntil(st.due) ?? 0) < 0
+    if (concluindo && atrasada) {
+      setModal({ kind: 'justAtraso', projId, code })
+      return
+    }
     mutar(projId, (p) => {
       const s = p.stages.find((x) => x.code === code)
       if (s) toggleDone(s)
+    })
+  }
+  function concluirComJustificativa(projId: string, code: string, texto: string) {
+    mutar(projId, (p) => {
+      const s = p.stages.find((x) => x.code === code)
+      if (!s) return
+      s.justificativaAtraso = texto
+      toggleDone(s)
+    })
+    setModal(null)
+  }
+  function setObs(projId: string, code: string, texto: string) {
+    mutar(projId, (p) => {
+      const s = p.stages.find((x) => x.code === code)
+      if (s) s.obs = texto
     })
   }
   function moverEtapa(projId: string, code: string) {
@@ -465,6 +489,7 @@ export default function Painel({ email, papel }: { email: string; papel: 'dona' 
             onPrevisto={(code, h) => setPrevisto(projeto.id, code, h)}
             onResponsavel={(code, pid) => setResponsavel(projeto.id, code, pid)}
             onPrazo={(code, iso) => aoMudarPrazo(projeto.id, code, iso)}
+            onObs={(code, texto) => setObs(projeto.id, code, texto)}
             ehDona={ehDona}
             minhaPessoaId={minhaPessoaId}
             onAprovarPrazo={(code) => aprovarPrazo(projeto.id, code)}
@@ -553,6 +578,18 @@ export default function Painel({ email, papel }: { email: string; papel: 'dona' 
             to={modal.to}
             onFechar={() => setModal(null)}
             onEnviar={(reason) => enviarPedidoPrazo(modal.projId, modal.code, modal.to, reason)}
+          />
+        )
+      })()}
+      {modal?.kind === 'justAtraso' && (() => {
+        const p = projetos.find((x) => x.id === modal.projId)
+        const st = p?.stages.find((s) => s.code === modal.code)
+        if (!p || !st) return null
+        return (
+          <JustAtrasoModal
+            etapa={st}
+            onFechar={() => setModal(null)}
+            onConcluir={(texto) => concluirComJustificativa(modal.projId, modal.code, texto)}
           />
         )
       })()}
@@ -896,7 +933,7 @@ function Card({
 
 /* ================= Detalhe do projeto ================= */
 function Detalhe({
-  projeto: p, equipe, personById, onVoltar, onPlay, onPause, onDone, onPrevisto, onResponsavel, onPrazo, ehDona, minhaPessoaId, onAprovarPrazo, onRecusarPrazo, onEditResp, onLog, onExcluir,
+  projeto: p, equipe, personById, onVoltar, onPlay, onPause, onDone, onPrevisto, onResponsavel, onPrazo, onObs, ehDona, minhaPessoaId, onAprovarPrazo, onRecusarPrazo, onEditResp, onLog, onExcluir,
 }: {
   projeto: Projeto
   equipe: Pessoa[]
@@ -908,6 +945,7 @@ function Detalhe({
   onPrevisto: (code: string, h: number) => void
   onResponsavel: (code: string, pid: string) => void
   onPrazo: (code: string, iso: string) => void
+  onObs: (code: string, texto: string) => void
   ehDona: boolean
   minhaPessoaId: string | null
   onAprovarPrazo: (code: string) => void
@@ -967,6 +1005,7 @@ function Detalhe({
             onPrevisto={(h) => onPrevisto(st.code, h)}
             onResponsavel={(pid) => onResponsavel(st.code, pid)}
             onPrazo={(iso) => onPrazo(st.code, iso)}
+            onObs={(texto) => onObs(st.code, texto)}
             ehDona={ehDona}
             onAprovarPrazo={() => onAprovarPrazo(st.code)}
             onRecusarPrazo={() => onRecusarPrazo(st.code)}
@@ -990,7 +1029,7 @@ function Stat({ cap, big, sub, bigColor }: { cap: string; big: string; sub: stri
 }
 
 function LinhaEtapa({
-  st, equipe, personById, onPlay, onPause, onDone, onPrevisto, onResponsavel, onPrazo, ehDona, onAprovarPrazo, onRecusarPrazo, onLog, travado,
+  st, equipe, personById, onPlay, onPause, onDone, onPrevisto, onResponsavel, onPrazo, onObs, ehDona, onAprovarPrazo, onRecusarPrazo, onLog, travado,
 }: {
   st: Etapa
   equipe: Pessoa[]
@@ -1001,6 +1040,7 @@ function LinhaEtapa({
   onPrevisto: (h: number) => void
   onResponsavel: (pid: string) => void
   onPrazo: (iso: string) => void
+  onObs: (texto: string) => void
   ehDona: boolean
   onAprovarPrazo: () => void
   onRecusarPrazo: () => void
@@ -1118,6 +1158,19 @@ function LinhaEtapa({
           <IconBtn title="Histórico" onClick={onLog}>⏱</IconBtn>
         </div>
       </div>
+      <div className="col-[1/-1] mt-1.5 flex flex-col gap-1">
+        <input
+          key={st.obs ?? 'none'}
+          defaultValue={st.obs || ''}
+          onBlur={(e) => { if (e.target.value !== (st.obs || '')) onObs(e.target.value) }}
+          placeholder="📝 Observação…"
+          className="w-full rounded-md border px-2 py-1 text-[12.5px]"
+          style={{ borderColor: C.linha, background: C.surf2 }}
+        />
+        {st.justificativaAtraso && (
+          <div className="text-[12px]" style={{ color: C.danger }}>⚠️ <b>Atraso:</b> {st.justificativaAtraso}</div>
+        )}
+      </div>
     </div>
   )
 }
@@ -1181,6 +1234,34 @@ function PedirPrazoModal({ etapa, to, onFechar, onEnviar }: { etapa: Etapa; to: 
       <div className="mt-4 flex justify-end gap-2.5">
         <button className="btn2" onClick={onFechar}>Cancelar</button>
         <button className="btn2-primary" disabled={!reason.trim()} style={{ opacity: reason.trim() ? 1 : 0.5 }} onClick={() => onEnviar(reason.trim())}>Enviar pedido</button>
+      </div>
+      <EstiloModal />
+    </Scrim>
+  )
+}
+
+/** Pede a justificativa ao concluir uma etapa que passou do prazo. */
+function JustAtrasoModal({ etapa, onFechar, onConcluir }: { etapa: Etapa; onFechar: () => void; onConcluir: (texto: string) => void }) {
+  const [texto, setTexto] = useState(etapa.justificativaAtraso || '')
+  const dias = etapa.due ? daysUntil(etapa.due) : null
+  return (
+    <Scrim onFechar={onFechar}>
+      <h3 className="text-lg font-bold">⚠️ Etapa concluída atrasada</h3>
+      <p className="mb-3 text-[13px]" style={{ color: C.muted }}>
+        <b>{etapa.code} {etapa.name}</b> venceu em {etapa.due ? fmtDate(etapa.due) : '—'}{dias !== null && dias < 0 ? ` (há ${Math.abs(dias)} dia${Math.abs(dias) === 1 ? '' : 's'})` : ''}. Explique o motivo do atraso antes de concluir.
+      </p>
+      <label className="text-[13px] font-semibold">Justificativa do atraso</label>
+      <textarea
+        value={texto}
+        onChange={(e) => setTexto(e.target.value)}
+        rows={3}
+        placeholder="Por que a etapa atrasou?"
+        className="mt-1 w-full rounded-md border px-2 py-1.5 text-[13px]"
+        style={{ borderColor: C.linha, background: C.surf2 }}
+      />
+      <div className="mt-4 flex justify-end gap-2.5">
+        <button className="btn2" onClick={onFechar}>Cancelar</button>
+        <button className="btn2-primary" disabled={!texto.trim()} style={{ opacity: texto.trim() ? 1 : 0.5 }} onClick={() => onConcluir(texto.trim())}>Concluir</button>
       </div>
       <EstiloModal />
     </Scrim>

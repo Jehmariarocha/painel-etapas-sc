@@ -57,6 +57,10 @@ export interface Etapa {
   log: EventoLog[]
   /** pedido de mudança de prazo pendente de aprovação (null = nenhum). */
   pendingDue?: PedidoPrazo | null
+  /** observação livre da etapa (anotações da equipe). */
+  obs?: string
+  /** justificativa do atraso, pedida ao concluir a etapa depois do prazo. */
+  justificativaAtraso?: string
 }
 
 export interface Projeto {

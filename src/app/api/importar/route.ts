@@ -59,6 +59,8 @@ export async function POST(req: NextRequest) {
         startedAt: typeof src.startedAt === 'number' ? src.startedAt : null,
         startedBy: typeof src.startedBy === 'string' ? src.startedBy : null,
         log: Array.isArray(src.log) ? src.log.slice(-200) : [],
+        obs: typeof src.obs === 'string' ? src.obs : undefined,
+        justificativaAtraso: typeof src.justificativaAtraso === 'string' ? src.justificativaAtraso : undefined,
       }
     })
     const p: Projeto = {
